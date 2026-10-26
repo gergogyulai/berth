@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSAppleScriptEnabled</key>
+	<true/>
+	<key>OSAScriptingDefinition</key>
+	<string>Berth.sdef</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Berth reads the name of your Wi-Fi network so shares can mount only on your home networks. Your location is never stored or shared.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Berth connects to file servers on your local network and discovers nearby SMB servers.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_smb._tcp</string>
+	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>app.berth.Berth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>berth</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="Berth Terminology" xmlns:xi="http://www.w3.org/2003/XInclude">
+    <xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite)"/>
+
+    <suite name="Berth Suite" code="Brth" description="Mount and unmount SMB shares.">
+        <class-extension extends="application" description="Berth’s top-level scripting object.">
+            <element type="share" access="r">
+                <cocoa key="scriptableShares"/>
+            </element>
+        </class-extension>
+
+        <class name="share" code="BShr" plural="shares" description="An SMB share configured in Berth.">
+            <cocoa class="ScriptableShare"/>
+            <property name="id" code="ID  " type="text" access="r" description="The unique identifier of the share.">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="The display name."/>
+            <property name="slug" code="BSsl" type="text" access="r" description="The short name used by the berth command."/>
+            <property name="state" code="BSst" type="text" access="r" description="disconnected, connecting, mounted, stale, reconnecting, auth-failed, host-unreachable, tailscale-down, paused or failed."/>
+            <property name="mounted" code="BSmt" type="boolean" access="r" description="Whether the share is mounted."/>
+            <property name="mount point" code="BSmp" type="text" access="r" description="Where the share is mounted, or empty.">
+                <cocoa key="mountPoint"/>
+            </property>
+            <property name="server" code="BSsv" type="text" access="r" description="The primary server address."/>
+            <property name="group" code="BSgp" type="text" access="r" description="The group the share belongs to, or empty.">
+                <cocoa key="groupName"/>
+            </property>
+            <property name="last error" code="BSle" type="text" access="r" description="The most recent error, or empty.">
+                <cocoa key="lastError"/>
+            </property>
+        </class>
+
+        <command name="mount" code="BrthMoun" description="Mount a share and wait until it is mounted.">
+            <cocoa class="BerthMountCommand"/>
+            <direct-parameter type="any" description="The share, or its name."/>
+            <result type="boolean" description="True if the share is mounted."/>
+        </command>
+
+        <command name="unmount" code="BrthUnmt" description="Unmount a share.">
+            <cocoa class="BerthUnmountCommand"/>
+            <direct-parameter type="any" description="The share, or its name."/>
+            <parameter name="force" code="BFrc" type="boolean" optional="yes" description="Unmount even if files are open.">
+                <cocoa key="force"/>
+            </parameter>
+            <result type="boolean" description="True if the share is no longer mounted."/>
+        </command>
+
+        <command name="reconnect" code="BrthRcon" description="Force-unmount a share and mount it again.">
+            <cocoa class="BerthReconnectCommand"/>
+            <direct-parameter type="any" description="The share, or its name."/>
+        </command>
+
+        <command name="mount all" code="BrthMAll" description="Mount every share, or every share in a group.">
+            <cocoa class="BerthMountAllCommand"/>
+            <parameter name="group" code="BGrp" type="text" optional="yes" description="Only shares in this group.">
+                <cocoa key="group"/>
+            </parameter>
+        </command>
+
+        <command name="unmount all" code="BrthUAll" description="Unmount every share, or every share in a group.">
+            <cocoa class="BerthUnmountAllCommand"/>
+            <parameter name="group" code="BGrp" type="text" optional="yes" description="Only shares in this group.">
+                <cocoa key="group"/>
+            </parameter>
+            <parameter name="force" code="BFrc" type="boolean" optional="yes" description="Unmount even if files are open.">
+                <cocoa key="force"/>
+            </parameter>
+        </command>
+    </suite>
+</dictionary>

@@ -1,0 +1,509 @@
+---
+import Ascii from "ascii.rest/astro";
+import "@fontsource-variable/big-shoulders-display";
+import "@fontsource-variable/jetbrains-mono";
+
+const repo = "https://github.com/gergogyulai/berth";
+const download = `${repo}/releases/latest`;
+
+const features = [
+  {
+    tag: "Mount",
+    title: "Every share, set up once",
+    body: "Add a host with fallback addresses, sign in as a user, domain user or guest, and give each share its own name, icon, mount point and group. Passwords go in your Keychain, one item per share.",
+  },
+  {
+    tag: "Reconnect",
+    title: "Comes back on its own",
+    body: "Switch from Wi-Fi to Ethernet, close the lid, toggle a VPN. Berth notices and remounts. Stale mounts get probed off the main thread, force-unmounted and brought back. A share you eject in Finder stays ejected.",
+  },
+  {
+    tag: "Route",
+    title: "Knows where you are",
+    body: "Tailscale being down is its own state, and MagicDNS and 100.x addresses are recognised. A share can mount only on home Wi-Fi, or at home and over Tailscale everywhere else. Wake-on-LAN included, and it holds off on metered networks.",
+  },
+  {
+    tag: "Tune",
+    title: "Faster SMB, no man pages",
+    body: "Edit nsmb.conf per server with Fast LAN, Tailscale/WAN and Compatibility presets, then run a speed test on the share to see what changed.",
+  },
+  {
+    tag: "Finder",
+    title: "Feels like part of macOS",
+    body: "Custom volume icons, pinning to the Finder sidebar, Open in Finder or Terminal, and Copy Path. Import shares that are already mounted, plus Finder's recent servers and anything on Bonjour.",
+  },
+  {
+    tag: "Sync",
+    title: "Your setup, on every Mac",
+    body: "Your share list syncs through iCloud Drive and exports to JSON. Passwords never leave the Keychain. They aren't synced or exported.",
+  },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Berth: SMB shares that stay mounted</title>
+    <meta
+      name="description"
+      content="Berth is a macOS menu bar app that mounts your SMB shares and keeps them mounted at home, over Tailscale, and after sleep."
+    />
+    <meta name="theme-color" content="#080b12" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <div class="scene" aria-hidden="true">
+      <Ascii piece="night-coast" label="A lighthouse turning its beam over a dark sea" />
+    </div>
+    <div class="shade" aria-hidden="true"></div>
+
+    <header class="nav">
+      <a class="brand" href="/">
+        <img src="/icon.svg" alt="" width="28" height="28" />
+        <span>Berth</span>
+      </a>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="#automation">Automation</a>
+        <a href={repo}>GitHub</a>
+        <a class="nav-cta" href={download}>Download</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="eyebrow">SMB for macOS</p>
+        <h1>Network shares<br />that stay mounted</h1>
+        <p class="lede">
+          Berth lives in your menu bar and keeps your SMB shares mounted: at home, over
+          Tailscale, and after sleep. Set a share up once and stop thinking about it.
+        </p>
+        <div class="actions">
+          <a class="btn btn-primary" href={download}>
+            <svg viewBox="0 0 17 20" width="15" height="18" aria-hidden="true"
+              ><path
+                fill="currentColor"
+                d="M14.1 10.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9C3.6 4.8 2 5.8 1 7.4c-1.9 3.3-.5 8.1 1.4 10.8.9 1.3 2 2.8 3.4 2.7 1.4-.1 1.9-.9 3.5-.9s2.1.9 3.5.9c1.5 0 2.4-1.3 3.3-2.6 1-1.5 1.5-3 1.5-3.1-.1 0-2.5-1-2.5-3.8zM11.5 3c.7-.9 1.2-2.1 1.1-3.3-1 0-2.3.7-3 1.6-.7.8-1.3 2-1.1 3.2 1.1.1 2.3-.6 3-1.5z"
+              ></path></svg
+            >
+            Download for macOS
+          </a>
+          <a class="btn btn-ghost" href={repo}>View on GitHub</a>
+        </div>
+        <p class="fine">Requires macOS 26 or later</p>
+      </section>
+
+      <section id="features" class="features">
+        <h2>What it does</h2>
+        <ol class="grid">
+          {
+            features.map((f, i) => (
+              <li class="card">
+                <p class="card-tag">
+                  #{i + 1} {f.tag}
+                </p>
+                <h3>{f.title}</h3>
+                <p>{f.body}</p>
+              </li>
+            ))
+          }
+        </ol>
+      </section>
+
+      <section id="automation" class="automation">
+        <div class="automation-copy">
+          <h2>Scriptable all the way down</h2>
+          <p>
+            Global hot keys, Shortcuts actions, AppleScript, <code>berth://</code> URLs and a
+            <code>berth</code> command-line tool. Install the CLI from Settings &rarr; Command
+            Line and mount from anywhere.
+          </p>
+        </div>
+        <div class="terminals">
+          <figure class="term">
+            <figcaption>zsh</figcaption>
+            <pre><code><span class="p">$</span> berth list
+<span class="p">$</span> berth mount nas-media
+<span class="p">$</span> berth unmount --group Backups --force
+<span class="p">$</span> cd "$(berth path nas-media)"</code></pre>
+          </figure>
+          <figure class="term">
+            <figcaption>AppleScript</figcaption>
+            <pre><code>tell application "Berth"
+    mount "NAS Media"
+    get state of every share
+    unmount all group "Backups"
+end tell</code></pre>
+          </figure>
+        </div>
+      </section>
+
+      <section class="closer">
+        <h2>Drop anchor</h2>
+        <a class="btn btn-primary" href={download}>Download Berth</a>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Berth &middot; macOS 26+</span>
+      <span>
+        Background: <a href="https://ascii.rest/night-coast/">night coast</a> by
+        <a href="https://github.com/bas3line">@bas3line</a>
+      </span>
+    </footer>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --ground: #080b12;
+    --ink: #eef1f6;
+    --muted: #a3b1cf;
+    --line: rgba(163, 177, 207, 0.22);
+    --beam: #ffd27c;
+    --blue: #5a9bff;
+    --display: "Big Shoulders Display Variable", "Arial Narrow", sans-serif;
+    --mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+    color-scheme: dark;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 14px/1.6 var(--mono);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a {
+    color: inherit;
+  }
+</style>
+
+<style>
+  /* The scene covers the viewport at its 2:1 ratio, held left of centre so the lighthouse
+     stays in frame on narrow screens. */
+  .scene {
+    --w: max(100vw, 200vh);
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    overflow: hidden;
+    background: var(--ground);
+  }
+
+  .scene :global(ascii-art) {
+    position: absolute;
+    top: 50%;
+    left: calc((100vw - var(--w)) * 0.15);
+    width: var(--w);
+    transform: translateY(-50%);
+    opacity: 0.8;
+  }
+
+  .shade {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background:
+      radial-gradient(ellipse 50% 40% at 50% 55%, rgba(8, 11, 18, 0.8), transparent 75%),
+      linear-gradient(to bottom, rgba(8, 11, 18, 0.5), transparent 25%);
+    pointer-events: none;
+  }
+
+  /* Nav */
+  .nav {
+    position: absolute;
+    inset: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 28px clamp(20px, 5vw, 64px);
+    z-index: 2;
+  }
+
+  .brand,
+  .nav nav a,
+  .eyebrow,
+  .btn,
+  .card-tag,
+  .term figcaption,
+  .footer {
+    font-family: var(--display);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 20px;
+    text-decoration: none;
+  }
+
+  .nav nav {
+    display: flex;
+    align-items: center;
+    gap: clamp(16px, 4vw, 56px);
+  }
+
+  .nav nav a {
+    font-size: 15px;
+    text-decoration: none;
+    opacity: 0.85;
+  }
+
+  .nav nav a:hover {
+    opacity: 1;
+  }
+
+  .nav .nav-cta {
+    padding: 6px 14px;
+    border: 1px solid rgba(238, 241, 246, 0.5);
+    background: rgba(8, 11, 18, 0.5);
+    opacity: 1;
+  }
+
+  /* Hero */
+  .hero {
+    min-height: 100vh;
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 120px 24px 18vh;
+    text-align: center;
+  }
+
+  .eyebrow {
+    margin: 0 0 20px;
+    color: var(--beam);
+    font-size: 15px;
+    letter-spacing: 0.3em;
+  }
+
+  h1,
+  h2 {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 250;
+    text-transform: uppercase;
+    line-height: 0.88;
+    letter-spacing: -0.01em;
+  }
+
+  h1 {
+    font-size: clamp(64px, 12vw, 176px);
+    text-shadow: 0 4px 40px rgba(8, 11, 18, 0.6);
+  }
+
+  .lede {
+    max-width: 560px;
+    margin: 32px 0 0;
+    color: var(--ink);
+    font-size: 15px;
+    text-shadow: 0 1px 12px rgba(8, 11, 18, 0.9);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 36px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 22px;
+    font-size: 17px;
+    text-decoration: none;
+    transition:
+      background 0.15s,
+      transform 0.15s;
+  }
+
+  .btn:hover {
+    transform: translateY(-1px);
+  }
+
+  .btn-primary {
+    background: var(--beam);
+    color: var(--ground);
+  }
+
+  .btn-primary:hover {
+    background: #ffe9ae;
+  }
+
+  .btn-ghost {
+    border: 1px solid rgba(238, 241, 246, 0.5);
+    background: rgba(8, 11, 18, 0.45);
+    backdrop-filter: blur(8px);
+  }
+
+  .btn-ghost:hover {
+    background: rgba(238, 241, 246, 0.12);
+  }
+
+  .fine {
+    margin: 20px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  /* Sections */
+  .features,
+  .automation,
+  .closer {
+    width: min(1180px, calc(100% - 40px));
+    margin: 0 auto 120px;
+  }
+
+  h2 {
+    font-size: clamp(48px, 7vw, 96px);
+    margin-bottom: 40px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border: 1px solid var(--line);
+    background: var(--line);
+  }
+
+  .card {
+    padding: 32px 28px 36px;
+    background: rgba(8, 11, 18, 0.88);
+  }
+
+  .card-tag {
+    margin: 0 0 18px;
+    color: var(--beam);
+    font-size: 14px;
+  }
+
+  .card h3 {
+    margin: 0 0 12px;
+    font-family: var(--display);
+    font-size: 32px;
+    font-weight: 500;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .card p:last-child {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .automation {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 48px;
+    align-items: start;
+  }
+
+  .automation-copy p {
+    margin: 0;
+    padding: 20px 22px;
+    border-left: 2px solid var(--beam);
+    background: rgba(8, 11, 18, 0.9);
+    color: var(--muted);
+  }
+
+  code {
+    color: var(--ink);
+    font-family: var(--mono);
+  }
+
+  .terminals {
+    display: grid;
+    gap: 16px;
+  }
+
+  .term {
+    margin: 0;
+    border: 1px solid var(--line);
+    background: rgba(8, 11, 18, 0.9);
+  }
+
+  .term figcaption {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .term pre {
+    margin: 0;
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  .term .p {
+    color: var(--beam);
+    user-select: none;
+  }
+
+  .closer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 0 20px;
+  }
+
+  .closer h2 {
+    font-size: clamp(64px, 11vw, 160px);
+    text-shadow: 0 4px 40px rgba(8, 11, 18, 0.6);
+  }
+
+  .footer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 24px clamp(20px, 5vw, 64px);
+    border-top: 1px solid var(--line);
+    background: rgba(8, 11, 18, 0.85);
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  @media (max-width: 820px) {
+    .automation {
+      grid-template-columns: 1fr;
+      gap: 0;
+    }
+
+    .automation-copy {
+      margin-bottom: 28px;
+    }
+
+    .nav nav a:not(.nav-cta) {
+      display: none;
+    }
+  }
+</style>

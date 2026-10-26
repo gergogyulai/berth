@@ -1,0 +1,33 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:0.37647,0.60392,0.98824,1.00000",
+      "display-p3:0.07059,0.14118,0.41176,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "solid" : "srgb:1.00000,1.00000,1.00000,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "Glyph.svg",
+          "name" : "Glyph"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.15
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : "shared"
+  }
+}

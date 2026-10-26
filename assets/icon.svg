@@ -1,4 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#2563eb"/>
-  <text x="32" y="32" dy="0.35em" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#ffffff">B</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="360" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5A9BFF"/>
+      <stop offset="0.55" stop-color="#2556D6"/>
+      <stop offset="1" stop-color="#0C2266"/>
+    </linearGradient>
+    <linearGradient id="glyph" x1="0" y1="236" x2="0" y2="788" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#D4E2FF"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
+  <!-- B whose counters are drive bays -->
+  <path fill="url(#glyph)" fill-rule="evenodd" d="M310 284A48 48 0 0 1 358 236H586A136 136 0 0 1 586 500H310ZM310 524H614A132 132 0 0 1 614 788H358A48 48 0 0 1 310 740ZM430 346H574A22 22 0 0 1 574 390H430A22 22 0 0 1 430 346ZM430 634H604A22 22 0 0 1 604 678H430A22 22 0 0 1 430 634Z"/>
 </svg>
