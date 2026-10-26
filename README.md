@@ -40,7 +40,7 @@ Open `Berth.xcodeproj` and run the **Berth** scheme, or:
 xcodebuild -project Berth.xcodeproj -scheme Berth -configuration Release build
 ```
 
-The project signs ad-hoc ("Sign to Run Locally"). To distribute, set your team and use a Developer ID. With an ad-hoc signature, macOS may ask again for Keychain access after each rebuild.
+Local builds sign ad-hoc ("Sign to Run Locally"), so macOS may ask again for Keychain access after each rebuild. Release builds are signed with a self-signed certificate from `scripts/make-signing-cert.sh`, which keeps the app's identity stable across updates. It isn't a Developer ID, so Gatekeeper still treats the app as unnotarized.
 
 ## Command line
 
@@ -64,3 +64,7 @@ end tell
 ```
 
 URLs: `berth://mount/<share>`, `berth://unmount/<share>`, `berth://mount-all?group=Media`, `berth://open/<share>`.
+
+## License
+
+MIT
