@@ -6,7 +6,7 @@ cask "berth" do
 
   url "https://github.com/gergogyulai/berth/releases/download/v#{version}/Berth-#{version}.zip"
   name "Berth"
-  desc "Menu bar app that keeps SMB shares mounted at home, over Tailscale and after sleep"
+  desc "Menu bar app that keeps SMB shares mounted, at home and over Tailscale"
   homepage "https://github.com/gergogyulai/berth"
 
   livecheck do
