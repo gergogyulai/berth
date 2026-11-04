@@ -721,9 +721,12 @@ public final class ShareCoordinator {
         rt.probeInFlight = true
         let isCloud = rt.mountedBackend == .cloud
         Task {
-            let result = isCloud
-                ? await CloudVolumes.shared.probe(share.id, timeout: .seconds(prefs.probeTimeout))
-                : await FileSystemProbe.probe(mountPoint: path, timeout: .seconds(prefs.probeTimeout))
+            let result: FileSystemProbe.Result
+            if isCloud {
+                result = await CloudVolumes.shared.probe(share.id, timeout: .seconds(prefs.probeTimeout))
+            } else {
+                result = await FileSystemProbe.probe(mountPoint: path, timeout: .seconds(prefs.probeTimeout))
+            }
             rt.probeInFlight = false
             guard rt.mountPoint == path, rt.operation == nil else { return }
             if isCloud, result == .notMounted {

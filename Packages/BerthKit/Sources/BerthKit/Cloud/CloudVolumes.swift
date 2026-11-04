@@ -295,12 +295,16 @@ public final class CloudVolumes {
         guard let connection else { return nil }
         connection.remoteObjectInterface = NSXPCInterface(with: BerthCloudControl.self)
         connection.invalidationHandler = { [weak self] in
-            Task { @MainActor in self?.controls.removeValue(forKey: shareID) }
+            // The Task must return Void: NSXPCConnection isn't Sendable.
+            Task { @MainActor in _ = self?.controls.removeValue(forKey: shareID) }
         }
         connection.resume()
         controls[shareID] = connection
         return connection.remoteObjectProxyWithErrorHandler { [weak self] _ in
-            Task { @MainActor in self?.controls.removeValue(forKey: shareID)?.invalidate() }
+            Task { @MainActor in
+                let dead = self?.controls.removeValue(forKey: shareID)
+                dead?.invalidate()
+            }
         } as? BerthCloudControl
     }
 
