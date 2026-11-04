@@ -251,6 +251,7 @@ private func folder(_ path: String, id: UInt64) -> SMBItem {
 
         // Clearing tags removes them.
         let cleared = CloudSyncEngine.changes(from: ["com.apple.metadata:_kMDItemUserTags": [1]], to: .init())
-        #expect(cleared == ["com.apple.metadata:_kMDItemUserTags": .some(nil)])
+        let removal: [String: [UInt8]?] = ["com.apple.metadata:_kMDItemUserTags": nil]
+        #expect(cleared == removal)
     }
 }
