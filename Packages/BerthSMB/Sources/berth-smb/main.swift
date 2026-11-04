@@ -14,6 +14,10 @@ commands:
   get <local-file>           download a file
   put <local-file>           upload a file (to the URL's path)
   mkdir | rm [-r] | mv <new-path>
+  ln <target>                create a symbolic link at the URL's path
+  readlink                   print a symbolic link's target
+  xattr [-w <name> <value> | -d <name>]
+                             list, set or remove extended attributes
   watch                      print change notifications until interrupted
   bench [--size MB] [--files N] [--io KiB] [--depth N]
                              upload/download throughput and metadata operations per second
@@ -48,7 +52,7 @@ if let depth = option("--depth").flatMap(Int.init) { configuration.tuning.ioDept
 let client = SMBClient(configuration)
 
 func describe(_ item: SMBItem) -> String {
-    let kind = item.isDirectory ? "d" : "-"
+    let kind = item.isSymbolicLink ? "l" : item.isDirectory ? "d" : "-"
     let size = item.isDirectory ? "" : ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file)
     let date = item.modificationDate.map { ISO8601DateFormatter().string(from: $0) } ?? "-"
     return "\(kind) \(size.padding(toLength: 10, withPad: " ", startingAt: 0)) \(date)  \(item.name.isEmpty ? "/" : item.name)"
@@ -109,6 +113,28 @@ func run() async throws {
     case "mv":
         guard let target = arguments.first else { fail(usage) }
         print(describe(try await client.moveItem(at: path, to: target)))
+
+    case "ln":
+        guard let target = arguments.first else { fail(usage) }
+        print(describe(try await client.createSymbolicLink(at: path, destination: target)))
+
+    case "readlink":
+        guard let target = try await client.symbolicLinkDestination(at: path) else { fail("\(path): not a symbolic link") }
+        print(target)
+
+    case "xattr":
+        if let index = arguments.firstIndex(of: "-w"), index + 2 < arguments.count {
+            try await client.setExtendedAttributes([arguments[index + 1]: Array(arguments[index + 2].utf8)], at: path)
+        } else if let name = option("-d") {
+            try await client.setExtendedAttributes([name: nil], at: path)
+        } else {
+            print("storage: \(try await client.attributeStorage())")
+            for (name, value) in try await client.extendedAttributes(at: path).sorted(by: { $0.key < $1.key }) {
+                let text = String(bytes: value, encoding: .utf8).map { "\"\($0)\"" }
+                    ?? value.map { String(format: "%02x", $0) }.joined()
+                print("\(name): \(text)")
+            }
+        }
 
     case "watch":
         for try await batch in client.changes(under: path) {

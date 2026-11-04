@@ -55,7 +55,7 @@ jobs:
         run: |
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq samba smbclient > /dev/null
-          mkdir -p /srv/smb/plain /srv/smb/enc /run/samba && chmod 777 /srv/smb/plain /srv/smb/enc
+          mkdir -p /srv/smb/plain /srv/smb/enc /srv/smb/mac /run/samba && chmod 777 /srv/smb/plain /srv/smb/enc /srv/smb/mac
           cat > /etc/samba/smb.conf <<'EOF'
           [global]
             server role = standalone server
@@ -72,6 +72,11 @@ jobs:
             path = /srv/smb/enc
             read only = no
             smb encrypt = required
+          # Named streams the way Mac-friendly NAS set-ups have them (xattrs and tags as streams).
+          [mac]
+            path = /srv/smb/mac
+            read only = no
+            vfs objects = catia fruit streams_xattr
           EOF
           useradd -M berth
           (echo 'p@ss w0rd'; echo 'p@ss w0rd') | smbpasswd -s -a berth
@@ -84,6 +89,7 @@ jobs:
         env:
           BERTH_SMB_TEST_URL: "smb://berth:p%40ss%20w0rd@127.0.0.1:4450/plain"
           BERTH_SMB_TEST_ENCRYPTED_URL: "smb://berth:p%40ss%20w0rd@127.0.0.1:4450/enc"
+          BERTH_SMB_TEST_STREAMS_URL: "smb://berth:p%40ss%20w0rd@127.0.0.1:4450/mac"
         run: swift test
 
       - name: Benchmark (loopback)

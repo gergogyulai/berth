@@ -141,17 +141,27 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
                 let kind: CloudSyncEngine.NewItemKind
                 if type.conforms(to: .folder) {
                     kind = .directory
-                } else if type.conforms(to: .symbolicLink) || type.conforms(to: .aliasFile) {
-                    // SMB has no portable symlinks; keep them local instead of uploading junk.
-                    throw CocoaError(.featureUnsupported)
+                } else if type.conforms(to: .symbolicLink) {
+                    // Stored the way Finder's own SMB client does it (a reparse point where the
+                    // server allows, an XSym file otherwise), so Macs and Linux see a link too.
+                    guard let target = itemTemplate.symlinkTargetPath ?? nil, !target.isEmpty else {
+                        throw CocoaError(.featureUnsupported)
+                    }
+                    kind = .symbolicLink(target: target)
                 } else {
+                    // Aliases are ordinary files (bookmark data plus Finder info).
                     kind = .file(contents: url)
                 }
                 let parent = itemTemplate.parentItemIdentifier == .rootContainer
                     ? CloudIndex.rootID : itemTemplate.parentItemIdentifier.rawValue
                 let modified = fields.contains(.contentModificationDate) ? (itemTemplate.contentModificationDate ?? nil) : nil
+                var metadata = CloudSyncEngine.Metadata()
+                if fields.contains(.extendedAttributes) {
+                    metadata.extendedAttributes = itemTemplate.extendedAttributes ?? [:]
+                }
+                if fields.contains(.tagData) { metadata.tagData = itemTemplate.tagData ?? nil }
                 let record = try await engine.create(in: parent, name: itemTemplate.filename, kind: kind,
-                                                     modificationDate: modified,
+                                                     modificationDate: modified, metadata: metadata,
                                                      mayAlreadyExist: options.contains(.mayAlreadyExist))
                 completionHandler(item(for: record), [], false, nil)
             } catch {
@@ -174,11 +184,16 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
                 }
                 let name = changedFields.contains(.filename) ? item.filename : nil
                 let contents = changedFields.contains(.contents) ? newContents : nil
+                let target = changedFields.contains(.contents) ? (item.symlinkTargetPath ?? nil) : nil
                 let modified = changedFields.contains(.contentModificationDate) ? (item.contentModificationDate ?? nil) : nil
                 let created = changedFields.contains(.creationDate) ? (item.creationDate ?? nil) : nil
+                let attributes = changedFields.contains(.extendedAttributes) ? (item.extendedAttributes ?? [:]) : nil
+                let tags: Data?? = changedFields.contains(.tagData) ? .some(item.tagData ?? nil) : .none
                 let record = try await engine.modify(id, parentID: parent, name: name, contents: contents,
-                                                     modificationDate: modified, creationDate: created)
-                // Tags, favorite rank, last-used date and extended attributes stay local.
+                                                     symlinkTarget: target, modificationDate: modified,
+                                                     creationDate: created, extendedAttributes: attributes, tagData: tags)
+                // Extended attributes and tags go to the server (as named streams or EAs); favorite
+                // rank and last-used date stay local.
                 completionHandler(self.item(for: record), [], false, nil)
             } catch {
                 completionHandler(nil, [], false, Self.fileProviderError(error))

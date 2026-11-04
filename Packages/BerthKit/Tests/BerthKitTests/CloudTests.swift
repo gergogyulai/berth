@@ -144,3 +144,113 @@ private func folder(_ path: String, id: UInt64) -> SMBItem {
         #expect(try index.takeDirty().isEmpty)
     }
 }
+
+@Suite struct CloudExtrasTests {
+    private static let tags = try! PropertyListSerialization.data(fromPropertyList: ["Red\n6", "Work"], format: .binary, options: 0)
+
+    @Test func extrasPersistAcrossListingsAndChangeVersions() throws {
+        let (index, dir) = try temporaryIndex()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try index.updateRoot(folder("", id: 1))
+        let first = try index.reconcile(directory: CloudIndex.rootID, with: [file("a.txt", id: 2), file("link", id: 3, size: 1067)])
+        let a = try #require(first.first { $0.name == "a.txt" })
+        let link = try #require(first.first { $0.name == "link" })
+        let before = a.metadataVersion
+        var anchor = index.currentAnchor
+
+        let tagged = try #require(try index.setExtras(id: a.id, symlinkTarget: nil, extendedAttributes: ["x.y": Data([1])],
+                                                      tagData: Self.tags, stamp: CloudIndex.ExtrasStamp(file("a.txt", id: 2))))
+        #expect(tagged.metadataVersion != before)
+        #expect(tagged.contentVersion == a.contentVersion)
+        #expect(index.currentAnchor > anchor) // tags are a change the system has to hear about
+
+        let linked = try #require(try index.setExtras(id: link.id, symlinkTarget: "a.txt", extendedAttributes: [:],
+                                                      tagData: nil, stamp: nil))
+        #expect(linked.isSymbolicLink)
+        #expect(linked.contentVersion != link.contentVersion)
+
+        // Re-listing the same server state keeps everything, and logs nothing.
+        anchor = index.currentAnchor
+        let again = try index.reconcile(directory: CloudIndex.rootID, with: [file("a.txt", id: 2), file("link", id: 3, size: 1067)])
+        #expect(index.currentAnchor == anchor)
+        #expect(again.first { $0.name == "a.txt" }?.tagData == Self.tags)
+        #expect(again.first { $0.name == "a.txt" }?.extendedAttributes == ["x.y": Data([1])])
+        #expect(again.first { $0.name == "link" }?.symlinkTarget == "a.txt")
+
+        // And they survive reopening the database.
+        let reopened = try CloudIndex(url: dir.appending(path: "index.sqlite"))
+        #expect(try reopened.record(id: a.id)?.tagData == Self.tags)
+        #expect(try reopened.children(of: CloudIndex.rootID).count == 2)
+
+        // Setting the same values again is not a change.
+        anchor = index.currentAnchor
+        try index.setExtras(id: a.id, symlinkTarget: nil, extendedAttributes: ["x.y": Data([1])], tagData: Self.tags, stamp: nil)
+        #expect(index.currentAnchor == anchor)
+
+        // Deleting the item takes its extras along.
+        try index.remove(id: a.id)
+        #expect(try index.record(id: a.id) == nil)
+    }
+
+    @Test func linksToFoldersAreNotFolders() throws {
+        let (index, dir) = try temporaryIndex()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try index.updateRoot(folder("", id: 1))
+        // An NTFS directory symlink: directory attribute plus a symlink reparse tag.
+        let ntfsLink = SMBItem(path: "docs", fileID: 5, isDirectory: true, reparseTag: SMBReparseTag.symlink)
+        let records = try index.reconcile(directory: CloudIndex.rootID, with: [ntfsLink])
+        #expect(records.first?.isDirectory == false)
+    }
+
+    @Test func extrasStampsNoticeServerChanges() {
+        let base = SMBItem(path: "a", fileID: 1, isDirectory: false, size: 3, lastWriteTime: 10, changeTime: 10, eaSize: 0)
+        let stamp = CloudIndex.ExtrasStamp(base)
+        #expect(!stamp.isStale(for: base))
+        var touched = base
+        touched.lastWriteTime = 11
+        #expect(stamp.isStale(for: touched))
+        var eaChanged = base
+        eaChanged.eaSize = 40 // Samba leaves the times alone when EAs change
+        #expect(stamp.isStale(for: eaChanged))
+        var unknownEA = base
+        unknownEA.eaSize = nil // CREATE/CLOSE results don't carry it
+        #expect(!stamp.isStale(for: unknownEA))
+    }
+
+    @Test func serverAttributesMapOntoFileProviderMetadata() {
+        let server: [String: [UInt8]] = [
+            "com.apple.metadata:_kMDItemUserTags": [UInt8](Self.tags),
+            "com.apple.FinderInfo": [UInt8](repeating: 1, count: 32),
+            "com.apple.quarantine": Array("q".utf8),
+            "org.example.note": Array("hi".utf8),
+            "big": [UInt8](repeating: 0, count: 40_000),
+        ]
+        let metadata = CloudSyncEngine.metadata(fromServer: server)
+        #expect(metadata.tagData == Self.tags)
+        #expect(metadata.extendedAttributes == ["org.example.note": Data("hi".utf8)]) // over-budget value dropped
+    }
+
+    @Test func metadataChangesOnlyTouchManagedAttributes() {
+        let current: [String: [UInt8]] = [
+            "com.apple.FinderInfo": [UInt8](repeating: 1, count: 32),
+            "org.example.old": [1],
+            "org.example.same": [2],
+        ]
+        let desired = CloudSyncEngine.Metadata(extendedAttributes: ["org.example.same": Data([2]), "org.example.new": Data([3])],
+                                               tagData: Self.tags)
+        let changes = CloudSyncEngine.changes(from: current, to: desired)
+        #expect(changes.count == 3)
+        #expect(changes["org.example.new"] == .some([3]))
+        #expect(changes["org.example.old"] == .some(nil))
+        #expect(changes["com.apple.metadata:_kMDItemUserTags"] == .some([UInt8](Self.tags)))
+        #expect(changes["com.apple.FinderInfo"] == nil) // not ours to change
+
+        // Tag data in an unknown format stays out of Finder's attribute.
+        let opaque = CloudSyncEngine.changes(from: [:], to: .init(tagData: Data([0xDE, 0xAD])))
+        #expect(opaque == ["app.berth.tagData": .some([0xDE, 0xAD])])
+
+        // Clearing tags removes them.
+        let cleared = CloudSyncEngine.changes(from: ["com.apple.metadata:_kMDItemUserTags": [1]], to: .init())
+        #expect(cleared == ["com.apple.metadata:_kMDItemUserTags": .some(nil)])
+    }
+}

@@ -204,11 +204,59 @@ enum SMBFileInfoClass: UInt8 {
     case basic = 4               // FileBasicInformation
     case standard = 5            // FileStandardInformation
     case fileID = 6              // FileInternalInformation (the file id)
+    case ea = 7                  // FileEaInformation (size of the EA list)
     case rename = 10             // FileRenameInformation
     case disposition = 13        // FileDispositionInformation
+    case fullEA = 15             // FileFullEaInformation
     case all = 18                // FileAllInformation
     case endOfFile = 20          // FileEndOfFileInformation
+    case stream = 22             // FileStreamInformation
+    case attributeTag = 35       // FileAttributeTagInformation (attributes + reparse tag)
     case idFullDirectory = 38    // FileIdFullDirectoryInformation
+}
+
+/// QUERY_INFO flags (MS-SMB2 2.2.37), used with FileFullEaInformation.
+enum SMBQueryInfoFlag {
+    static let restartScan: UInt32 = 0x0000_0001
+    static let returnSingleEntry: UInt32 = 0x0000_0002
+    static let indexSpecified: UInt32 = 0x0000_0004
+}
+
+/// FSCTL codes (MS-FSCC 2.3).
+enum SMBFSControl {
+    static let getReparsePoint: UInt32 = 0x0009_00A8
+    static let setReparsePoint: UInt32 = 0x0009_00A4
+}
+
+/// SMB2 IOCTL request flags.
+enum SMBIOCTLFlag {
+    static let isFSCTL: UInt32 = 0x0000_0001
+}
+
+/// Reparse tags (MS-FSCC 2.1.2.1) that this client understands.
+public enum SMBReparseTag {
+    /// NTFS symbolic link.
+    public static let symlink: UInt32 = 0xA000_000C
+    /// Special file created by the Windows NFS server (and SMB3 POSIX servers); symlinks are
+    /// the `LNK` kind.
+    public static let nfs: UInt32 = 0x8000_0014
+    /// Windows mount point / directory junction.
+    public static let mountPoint: UInt32 = 0xA000_0003
+}
+
+/// FileFsAttributeInformation flags (MS-FSCC 2.5.1).
+public struct SMBFileSystemAttributes: OptionSet, Sendable, Hashable {
+    public let rawValue: UInt32
+    public init(rawValue: UInt32) { self.rawValue = rawValue }
+
+    public static let caseSensitiveSearch = SMBFileSystemAttributes(rawValue: 0x0000_0001)
+    public static let casePreservedNames = SMBFileSystemAttributes(rawValue: 0x0000_0002)
+    public static let unicodeOnDisk = SMBFileSystemAttributes(rawValue: 0x0000_0004)
+    public static let persistentACLs = SMBFileSystemAttributes(rawValue: 0x0000_0008)
+    public static let reparsePoints = SMBFileSystemAttributes(rawValue: 0x0000_0080)
+    public static let namedStreams = SMBFileSystemAttributes(rawValue: 0x0004_0000)
+    public static let readOnlyVolume = SMBFileSystemAttributes(rawValue: 0x0008_0000)
+    public static let extendedAttributes = SMBFileSystemAttributes(rawValue: 0x0080_0000)
 }
 
 enum SMBFSInfoClass: UInt8 {

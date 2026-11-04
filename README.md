@@ -39,7 +39,12 @@ The extension stores its configuration and password itself: Berth pushes them ov
 
 **Signing.** File Provider extensions have to be sandboxed and in an App Group. That works best with an Apple Development or Developer ID team: set `DEVELOPMENT_TEAM` (Signing & Capabilities) for both the **Berth** and **BerthCloud** targets. Ad-hoc builds compile and run, but macOS may refuse to load the extension or ask for access to the group container; the macOS backend is unaffected either way. The first cloud location also has to be allowed in **System Settings → General → Login Items & Extensions → File Providers**.
 
-**Not (yet) supported by the cloud backend:** Kerberos (NTLMv2 only), DFS referrals, SMB 3.0/3.0.2 encryption (AES-CCM; 3.1.1 AES-GCM works), symlinks, extended attributes and Finder tags on the server, and the nsmb.conf presets (cloud shares map the preset onto BerthSMB tuning instead).
+**Symlinks, extended attributes and Finder tags** are stored on the server in the same formats Finder's own SMB client uses, so a Mac that mounts the share in Finder sees the same links, xattrs and tags:
+
+- *Symlinks*: NTFS/NFS symlink reparse points and Minshall-French "XSym" files are shown as symlinks. New links become reparse points where the server can store them (Windows, NTFS-backed NAS) and XSym files everywhere else (Samba). Deleting or renaming a link never touches its target.
+- *Extended attributes and tags* are stored as named streams when the share has them (Windows, Samba with `vfs objects = catia fruit streams_xattr`, most Mac-ready NAS). Tags go in `com.apple.metadata:_kMDItemUserTags`. On shares without streams they're stored as SMB extended attributes, which plain Samba maps to `user.*` xattrs. If a share supports neither, they stay on this Mac. They're re-read when a listing shows the item changed (its timestamps, or the EA size the server reports), and they're written again after an upload replaces the file.
+
+**Not (yet) supported by the cloud backend:** Kerberos (NTLMv2 only), DFS referrals, SMB 3.0/3.0.2 encryption (AES-CCM; 3.1.1 AES-GCM works), and the nsmb.conf presets (cloud shares map the preset onto BerthSMB tuning instead).
 
 ## Install
 

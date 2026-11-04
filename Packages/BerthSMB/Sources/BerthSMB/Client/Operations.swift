@@ -7,17 +7,23 @@ extension SMBClient {
         try await perform(idempotent: true) { tree in try await Self.stat(tree, path) }
     }
 
+    /// Like lstat: a symbolic link reports itself, not its target.
     static func stat(_ tree: SMBTree, _ path: String) async throws -> SMBItem {
         let r = try await tree.compound([
             Requests.create(path: SMBPath.wire(path), access: [.readAttributes, .synchronize],
-                            disposition: .open, options: []),
+                            disposition: .open, options: [.openReparsePoint]),
             Requests.queryInfo(.related, type: .file, infoClass: SMBFileInfoClass.fileID.rawValue, outputLength: 8),
+            Requests.queryInfo(.related, type: .file, infoClass: SMBFileInfoClass.attributeTag.rawValue, outputLength: 8),
+            Requests.queryInfo(.related, type: .file, infoClass: SMBFileInfoClass.ea.rawValue, outputLength: 4),
             Requests.close(.related),
         ])
         try r[0].check()
+        tree.closeIfLeaked(r)
         let create = try CreateResponse(r[0])
         let fileID = r[1].status.isSuccess ? (try? r[1].outputBuffer().u64(0)) ?? 0 : 0
-        return SMBItem(path: SMBPath.normalize(path), stat: create.stat, fileID: fileID)
+        let tag = r[2].status.isSuccess ? (try? r[2].outputBuffer().u32(4)) ?? 0 : 0
+        let eaSize = r[3].status.isSuccess ? try? r[3].outputBuffer().u32(0) : nil
+        return SMBItem(path: SMBPath.normalize(path), stat: create.stat, fileID: fileID, reparseTag: tag, eaSize: eaSize)
     }
 
     /// Whether something exists at `path`.
@@ -55,7 +61,11 @@ extension SMBClient {
         var items: [SMBItem] = []
         func collect(_ message: SMBMessage) throws {
             for entry in try DirectoryParser.entries(message.outputBuffer()) where entry.name != "." && entry.name != ".." {
-                items.append(SMBItem(path: SMBPath.join(base, entry.name), stat: entry.stat, fileID: entry.fileID))
+                // EaSize doubles as the reparse tag for reparse points (MS-FSCC 2.4.17).
+                let isReparse = entry.stat.attributes.contains(.reparsePoint)
+                items.append(SMBItem(path: SMBPath.join(base, entry.name), stat: entry.stat, fileID: entry.fileID,
+                                     reparseTag: isReparse ? entry.eaSizeOrReparseTag : 0,
+                                     eaSize: isReparse ? nil : entry.eaSizeOrReparseTag))
             }
         }
 
@@ -142,11 +152,17 @@ extension SMBClient {
     }
 
     /// Marks `path` delete-on-close (works for files and directories; a non-empty directory
-    /// reports STATUS_DIRECTORY_NOT_EMPTY right away).
+    /// reports STATUS_DIRECTORY_NOT_EMPTY right away). A symbolic link is deleted itself, never
+    /// its target.
     private static func deleteOne(_ tree: SMBTree, _ path: String, clearReadOnly: Bool) async throws -> NTStatus {
-        var requests = [Requests.create(path: SMBPath.wire(path),
+        try await deleteOne(tree, wire: SMBPath.wire(path), clearReadOnly: clearReadOnly)
+    }
+
+    /// `wire` is a server path as sent on the wire, which may name a stream ("file:stream").
+    static func deleteOne(_ tree: SMBTree, wire: String, clearReadOnly: Bool) async throws -> NTStatus {
+        var requests = [Requests.create(path: wire,
                                         access: clearReadOnly ? [.delete, .readAttributes, .writeAttributes] : [.delete, .readAttributes],
-                                        disposition: .open, options: [])]
+                                        disposition: .open, options: [.openReparsePoint])]
         if clearReadOnly {
             requests.append(Requests.setInfo(.related, infoClass: .basic, buffer: Requests.basicInfo(attributes: .normal)))
         }
@@ -154,6 +170,7 @@ extension SMBClient {
         requests.append(Requests.close(.related))
         let r = try await tree.compound(requests)
         if r[0].status.isError { return r[0].status }
+        tree.closeIfLeaked(r)
         for message in r.dropFirst().dropLast() where message.status.isError { return message.status }
         return .success
     }
@@ -164,7 +181,7 @@ extension SMBClient {
         try await perform(idempotent: false) { tree in
             let r = try await tree.compound([
                 Requests.create(path: SMBPath.wire(source), access: [.delete, .readAttributes, .synchronize],
-                                disposition: .open, options: []),
+                                disposition: .open, options: [.openReparsePoint]),
                 Requests.setInfo(.related, infoClass: .rename,
                                  buffer: Requests.renameInfo(target: SMBPath.wire(destination), replaceIfExists: replaceExisting)),
                 Requests.queryInfo(.related, type: .file, infoClass: SMBFileInfoClass.fileID.rawValue, outputLength: 8),
@@ -189,7 +206,7 @@ extension SMBClient {
                                           attributes: attributes ?? [])
             let r = try await tree.compound([
                 Requests.create(path: SMBPath.wire(path), access: [.readAttributes, .writeAttributes, .synchronize],
-                                disposition: .open, options: []),
+                                disposition: .open, options: [.openReparsePoint]),
                 Requests.setInfo(.related, infoClass: .basic, buffer: info),
                 Requests.queryInfo(.related, type: .file, infoClass: SMBFileInfoClass.fileID.rawValue, outputLength: 8),
                 Requests.close(.related, postQueryAttributes: true),

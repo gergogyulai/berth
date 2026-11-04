@@ -20,6 +20,14 @@ public enum CloudError: Error, Sendable, Equatable, CustomStringConvertible {
         return false
     }
 
+    /// Worth retrying later rather than working around now.
+    public var isTransient: Bool {
+        switch self {
+        case .unreachable, .notAuthenticated, .notConfigured, .cancelled, .noSuchItem: true
+        default: false
+        }
+    }
+
     public var description: String {
         switch self {
         case .notConfigured: "Berth hasn't set up this location yet. Mount the share in Berth."
@@ -75,6 +83,8 @@ public final class CloudSyncEngine: Sendable {
         var client: SMBClient?
         var endpoint: CloudDomainConfiguration.Endpoint?
         var lastError: String?
+        /// How the current client's share stores extended attributes, once known.
+        var storage: SMBAttributeStorage?
     }
 
     private let state = Mutex(State())
@@ -122,6 +132,7 @@ public final class CloudSyncEngine: Sendable {
             let client = s.client
             s.client = nil
             s.endpoint = nil
+            s.storage = nil
             return client
         }
         if let stale { Task { await stale.disconnect() } }
@@ -140,6 +151,7 @@ public final class CloudSyncEngine: Sendable {
             let client = SMBClient(configuration.clientConfiguration(endpoint: next, password: password))
             s.client = client
             s.endpoint = next
+            s.storage = nil
             return client
         }
     }
@@ -206,7 +218,8 @@ public final class CloudSyncEngine: Sendable {
         }
         do {
             let fresh = try await withClient { try await $0.item(at: path) }
-            return try index.replace(id: id, with: fresh, parentID: known.parentID)
+            let record = try index.replace(id: id, with: fresh, parentID: known.parentID)
+            return await refreshExtras([(record, fresh)]).first ?? record
         } catch CloudError.noSuchItem {
             try index.remove(id: id)
             throw CloudError.noSuchItem
@@ -228,7 +241,10 @@ public final class CloudSyncEngine: Sendable {
         }
         do {
             let items = try await withClient { try await $0.contentsOfDirectory(at: path) }
-            return try index.reconcile(directory: containerID, with: items)
+            let records = try index.reconcile(directory: containerID, with: items)
+            var byName: [String: SMBItem] = [:]
+            for item in items { byName[item.name] = item }
+            return await refreshExtras(records.compactMap { record in byName[record.name].map { (record, $0) } })
         } catch CloudError.noSuchItem {
             if containerID != CloudIndex.rootID { try index.remove(id: containerID) }
             throw CloudError.noSuchItem
@@ -243,6 +259,15 @@ public final class CloudSyncEngine: Sendable {
         }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appending(path: "fetch-\(UUID().uuidString)")
+        if let target = known.symlinkTarget {
+            // A link's contents are its target; there's nothing to download.
+            do {
+                try FileManager.default.createSymbolicLink(atPath: destination.path, withDestinationPath: target)
+            } catch {
+                throw CloudError.other("Could not create the symbolic link: \(error.localizedDescription)")
+            }
+            return (destination, known)
+        }
         do {
             let item = try await withClient { try await $0.download(path, to: destination, progress: progress) }
             let updated = try index.replace(id: id, with: item, parentID: known.parentID)
@@ -257,10 +282,32 @@ public final class CloudSyncEngine: Sendable {
     public enum NewItemKind: Sendable {
         case file(contents: URL?)
         case directory
+        case symbolicLink(target: String)
+    }
+
+    /// Extended attributes and tags for a new or modified item.
+    public struct Metadata: Sendable, Equatable {
+        public var extendedAttributes: [String: Data]
+        public var tagData: Data?
+
+        public init(extendedAttributes: [String: Data] = [:], tagData: Data? = nil) {
+            self.extendedAttributes = extendedAttributes
+            self.tagData = tagData
+        }
+
+        public var isEmpty: Bool { extendedAttributes.isEmpty && (tagData?.isEmpty ?? true) }
     }
 
     public func create(in parentID: String, name: String, kind: NewItemKind, modificationDate: Date?,
-                       mayAlreadyExist: Bool) async throws -> CloudIndex.Record {
+                       metadata: Metadata = Metadata(), mayAlreadyExist: Bool) async throws -> CloudIndex.Record {
+        let record = try await createItem(in: parentID, name: name, kind: kind, modificationDate: modificationDate,
+                                          mayAlreadyExist: mayAlreadyExist)
+        guard !metadata.isEmpty, !record.isSymbolicLink else { return record }
+        return try await applyMetadata(metadata, to: record, replacingServerState: !mayAlreadyExist)
+    }
+
+    private func createItem(in parentID: String, name: String, kind: NewItemKind, modificationDate: Date?,
+                            mayAlreadyExist: Bool) async throws -> CloudIndex.Record {
         guard configuration?.readOnly != true else { throw CloudError.readOnly }
         guard let parentPath = try index.path(of: parentID) else { throw CloudError.noSuchItem }
         let path = SMBPath.join(parentPath, name)
@@ -275,6 +322,22 @@ public final class CloudSyncEngine: Sendable {
                 guard existing.isDirectory else { throw CloudError.collision }
                 return try index.upsert(existing, parentID: parentID)
             }
+        case .symbolicLink(let target):
+            let item: SMBItem
+            do {
+                item = try await withClient { try await $0.createSymbolicLink(at: path, destination: target) }
+            } catch CloudError.collision where mayAlreadyExist {
+                let existing = try await withClient { client -> (SMBItem, String?) in
+                    let item = try await client.item(at: path)
+                    guard item.mightBeSymbolicLink else { return (item, nil) }
+                    return (item, try await client.symbolicLinkDestination(at: path))
+                }
+                guard existing.1 == target else { throw CloudError.collision }
+                item = existing.0
+            }
+            let record = try index.upsert(item, parentID: parentID)
+            return try index.setExtras(id: record.id, symlinkTarget: target, extendedAttributes: [:], tagData: nil,
+                                       stamp: CloudIndex.ExtrasStamp(item)) ?? record
         case .file(let contents):
             let source = try contents ?? emptyFile()
             if mayAlreadyExist, let existing = try? await withClient({ try await $0.item(at: path) }), !existing.isDirectory,
@@ -293,9 +356,11 @@ public final class CloudSyncEngine: Sendable {
         }
     }
 
-    /// Applies renames/moves, new contents and timestamps, in that order.
+    /// Applies renames/moves, new contents (or a new link target), timestamps and metadata, in
+    /// that order. nil leaves a field as it is.
     public func modify(_ id: String, parentID newParentID: String?, name newName: String?, contents: URL?,
-                       modificationDate: Date?, creationDate: Date?) async throws -> CloudIndex.Record {
+                       symlinkTarget: String? = nil, modificationDate: Date?, creationDate: Date?,
+                       extendedAttributes: [String: Data]? = nil, tagData: Data?? = nil) async throws -> CloudIndex.Record {
         guard var record = try index.record(id: id), var path = try index.path(of: id) else {
             throw CloudError.noSuchItem
         }
@@ -315,19 +380,204 @@ public final class CloudSyncEngine: Sendable {
         }
 
         let finalPath = path
-        if let contents {
+        var replacedFile = false
+        if let symlinkTarget, record.isSymbolicLink, symlinkTarget != record.symlinkTarget {
+            guard !readOnly else { throw CloudError.readOnly }
+            let item = try await withClient {
+                try await $0.createSymbolicLink(at: finalPath, destination: symlinkTarget, replaceExisting: true)
+            }
+            record = try index.replace(id: id, with: item, parentID: record.parentID)
+            record = try index.setExtras(id: id, symlinkTarget: symlinkTarget, extendedAttributes: [:], tagData: nil,
+                                         stamp: CloudIndex.ExtrasStamp(item)) ?? record
+        } else if let contents, !record.isSymbolicLink {
             guard !readOnly else { throw CloudError.readOnly }
             let item = try await withClient {
                 try await $0.upload(contents, to: finalPath, replaceExisting: true, modificationDate: modificationDate)
             }
             record = try index.replace(id: id, with: item, parentID: record.parentID)
+            replacedFile = true
         } else if modificationDate != nil || creationDate != nil, !readOnly {
             let item = try await withClient {
                 try await $0.setAttributes(at: finalPath, modificationDate: modificationDate, creationDate: creationDate)
             }
             record = try index.replace(id: id, with: item, parentID: record.parentID)
         }
+
+        if record.isSymbolicLink { return record }
+        var metadata = Metadata(extendedAttributes: record.extendedAttributes, tagData: record.tagData)
+        if let extendedAttributes { metadata.extendedAttributes = extendedAttributes }
+        if let tagData { metadata.tagData = tagData }
+        let changed = metadata != Metadata(extendedAttributes: record.extendedAttributes, tagData: record.tagData)
+        // An upload replaces the server file, and its streams or EAs with it: write them again.
+        if changed || (replacedFile && !metadata.isEmpty) {
+            record = try await applyMetadata(metadata, to: record, replacingServerState: replacedFile)
+        }
         return record
+    }
+
+    // MARK: Links, extended attributes and tags
+
+    /// Where Finder's own SMB client keeps tags, so a Mac with the share mounted in Finder sees the
+    /// same ones.
+    static let tagAttribute = "com.apple.metadata:_kMDItemUserTags"
+    /// Where File Provider tag data goes when it isn't in the `_kMDItemUserTags` format.
+    static let opaqueTagAttribute = "app.berth.tagData"
+    /// Attributes File Provider handles itself (tags, Finder info, resource fork, dates) or that
+    /// shouldn't travel between Macs.
+    static let unsyncedAttributes: Set<String> = [
+        tagAttribute, opaqueTagAttribute, "com.apple.FinderInfo", "com.apple.ResourceFork", "com.apple.quarantine",
+        "com.apple.lastuseddate#PS", "com.apple.macl", "com.apple.provenance", "Zone.Identifier",
+    ]
+    /// File Provider syncs about 32 KiB of extended attributes per item.
+    static let attributeBudget = 32 * 1024
+
+    static func isSyncable(_ name: String) -> Bool {
+        !name.isEmpty && !unsyncedAttributes.contains(name) && !name.hasPrefix("AFP_")
+    }
+
+    /// The server attributes as File Provider's extended attributes and tag data.
+    static func metadata(fromServer attributes: [String: [UInt8]]) -> Metadata {
+        var out = Metadata()
+        var budget = attributeBudget
+        for (name, value) in attributes.sorted(by: { $0.key < $1.key }) where isSyncable(name) {
+            guard value.count <= budget else { continue }
+            budget -= value.count
+            out.extendedAttributes[name] = Data(value)
+        }
+        if let tags = attributes[tagAttribute] ?? attributes[opaqueTagAttribute], !tags.isEmpty {
+            out.tagData = Data(tags)
+        }
+        return out
+    }
+
+    /// Tag data in the `_kMDItemUserTags` format: a property list array of strings.
+    static func isUserTagsPlist(_ data: Data) -> Bool {
+        (try? PropertyListSerialization.propertyList(from: data, format: nil)) is [String]
+    }
+
+    /// The writes that turn the server's `current` attributes into `desired`, touching only the
+    /// attributes this engine manages.
+    static func changes(from current: [String: [UInt8]], to desired: Metadata) -> [String: [UInt8]?] {
+        var changes: [String: [UInt8]?] = [:]
+        for (name, value) in desired.extendedAttributes where isSyncable(name) {
+            let bytes = [UInt8](value)
+            if current[name] != bytes { changes[name] = .some(bytes) }
+        }
+        for name in current.keys where isSyncable(name) && desired.extendedAttributes[name] == nil {
+            changes[name] = .some(nil)
+        }
+        let tags = desired.tagData.flatMap { $0.isEmpty ? nil : [UInt8]($0) }
+        if let tags, isUserTagsPlist(Data(tags)) {
+            if current[tagAttribute] != tags { changes[tagAttribute] = .some(tags) }
+            if current[opaqueTagAttribute] != nil { changes[opaqueTagAttribute] = .some(nil) }
+        } else if let tags {
+            // Unknown format: keep it to ourselves rather than clobber Finder's tags.
+            if current[opaqueTagAttribute] != tags { changes[opaqueTagAttribute] = .some(tags) }
+        } else {
+            if current[tagAttribute] != nil { changes[tagAttribute] = .some(nil) }
+            if current[opaqueTagAttribute] != nil { changes[opaqueTagAttribute] = .some(nil) }
+        }
+        return changes
+    }
+
+    private func attributeStorage(_ client: SMBClient) async -> SMBAttributeStorage {
+        if let known = state.withLock({ $0.client === client ? $0.storage : nil }) { return known }
+        guard let storage = try? await client.attributeStorage() else { return .none }
+        state.withLock { s in if s.client === client { s.storage = storage } }
+        return storage
+    }
+
+    /// Writes extended attributes and tags to the server (or, where it can't store them, just to
+    /// the index, so they stay on this Mac) and records the result.
+    private func applyMetadata(_ metadata: Metadata, to record: CloudIndex.Record,
+                               replacingServerState: Bool) async throws -> CloudIndex.Record {
+        let keepLocally = {
+            try self.index.setExtras(id: record.id, symlinkTarget: record.symlinkTarget,
+                                     extendedAttributes: metadata.extendedAttributes, tagData: metadata.tagData,
+                                     stamp: nil) ?? record
+        }
+        guard configuration?.readOnly != true, let path = try index.path(of: record.id) else { return try keepLocally() }
+        do {
+            let result: (SMBItem, Metadata)? = try await withClient { client in
+                guard await self.attributeStorage(client) != .none else { return nil }
+                var current: [String: [UInt8]] = [:]
+                if !replacingServerState { current = try await client.extendedAttributes(at: path) }
+                let changes = Self.changes(from: current, to: metadata)
+                let item: SMBItem
+                if changes.isEmpty {
+                    item = try await client.item(at: path)
+                } else {
+                    item = try await client.setExtendedAttributes(changes, at: path)
+                }
+                var stored = current
+                for (name, value) in changes { stored[name] = value }
+                return (item, Self.metadata(fromServer: stored))
+            }
+            guard let result else { return try keepLocally() }
+            let (item, stored) = result
+            let updated = try index.replace(id: record.id, with: item, parentID: record.parentID)
+            return try index.setExtras(id: record.id, symlinkTarget: nil, extendedAttributes: stored.extendedAttributes,
+                                       tagData: stored.tagData, stamp: CloudIndex.ExtrasStamp(item)) ?? updated
+        } catch let error as CloudError where error.isTransient {
+            throw error
+        } catch {
+            // The server refused an attribute (a name it can't store, a size limit…). Failing the
+            // whole change would make the system retry forever; keep the metadata on this Mac.
+            return try keepLocally()
+        }
+    }
+
+    /// Reads link targets and extended attributes for records whose server state changed since
+    /// they were last read. Failures leave the old values in place.
+    private func refreshExtras(_ pairs: [(CloudIndex.Record, SMBItem)]) async -> [CloudIndex.Record] {
+        let stale = pairs.enumerated().filter { _, pair in
+            let (record, item) = pair
+            if record.isRoot { return false }
+            guard let stamp = record.extrasStamp else { return true }
+            return stamp.isStale(for: item)
+        }
+        guard !stale.isEmpty, let client = try? self.client() else { return pairs.map(\.0) }
+        let storage = await attributeStorage(client)
+        var results = pairs.map(\.0)
+        await withTaskGroup(of: (Int, CloudIndex.Record?).self) { group in
+            var running = 0
+            for (offset, pair) in stale {
+                if running >= 32 {
+                    if let next = await group.next(), let record = next.1 { results[next.0] = record }
+                    running -= 1
+                }
+                group.addTask {
+                    (offset, await self.readExtras(record: pair.0, item: pair.1, storage: storage, client: client))
+                }
+                running += 1
+            }
+            for await (index, record) in group {
+                if let record { results[index] = record }
+            }
+        }
+        return results
+    }
+
+    private func readExtras(record: CloudIndex.Record, item: SMBItem, storage: SMBAttributeStorage,
+                            client: SMBClient) async -> CloudIndex.Record? {
+        do {
+            let path = item.path
+            var target: String?
+            if item.mightBeSymbolicLink { target = try await client.symbolicLinkDestination(at: path) }
+            var metadata = Metadata(extendedAttributes: record.extendedAttributes, tagData: record.tagData)
+            if target != nil {
+                metadata = Metadata()
+            } else if storage == .extendedAttributes && item.eaSize == 0 {
+                metadata = Metadata() // no EAs at all, and the listing said so for free
+            } else if storage != .none {
+                let attributes = try await client.extendedAttributes(at: path)
+                metadata = Self.metadata(fromServer: attributes)
+            }
+            return try index.setExtras(id: record.id, symlinkTarget: target, extendedAttributes: metadata.extendedAttributes,
+                                       tagData: metadata.tagData, stamp: CloudIndex.ExtrasStamp(item))
+        } catch {
+            return nil
+        }
     }
 
     public func delete(_ id: String, recursive: Bool) async throws {

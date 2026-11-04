@@ -31,7 +31,9 @@ Measured by CI (`berth-smb bench`, GitHub runner, loopback to Samba 4.19 with ma
 | Authentication | NTLMv2 in SPNEGO, with the AUTHENTICATE MIC and the SPNEGO mechListMIC; guest; anonymous |
 | Signing | HMAC-SHA256 (2.x), AES-CMAC (3.x), AES-GMAC (3.1.1). Responses are verified, including the final SESSION_SETUP (downgrade protection) |
 | Encryption | AES-128-GCM and AES-256-GCM (3.1.1), per session or per share, or forced by the client |
-| Operations | stat, list, read/download, write/upload, mkdir, delete (recursive), rename/move, set times/attributes, volume size, ECHO, CHANGE_NOTIFY |
+| Operations | stat, list, read/download, write/upload, mkdir, delete (recursive), rename/move, set times/attributes, volume size and attributes, ECHO, CHANGE_NOTIFY |
+| Symlinks | Reads NTFS and NFS symlink reparse points (FSCTL_GET_REPARSE_POINT) and XSym files (the format macOS smbfs and Linux `mfsymlinks` use). Creates reparse points where the volume supports them, XSym files otherwise. stat, delete and rename act on the link itself |
+| Extended attributes | macOS xattr names over named streams, with the SFM character mapping and `AFP_AfpInfo`/`AFP_Resource` for FinderInfo and the resource fork (what smbfs and vfs_fruit use), or over SMB EAs (FileFullEaInformation) with escaped names on servers without streams. Setting them preserves the modification date |
 | Resilience | Single-flight reconnect; idempotent operations retry once on a fresh connection; request deadlines (soft-mount semantics); async (STATUS_PENDING) responses and SMB2 CANCEL |
 
 Not implemented: Kerberos, DFS, SMB 3.0 AES-CCM encryption, multichannel, leases/oplocks, compression, server-side copy.
@@ -56,11 +58,12 @@ swift test
 
 runs the unit tests: RFC/MS-NLMP crypto and NTLMv2 vectors, plus byte-for-byte golden vectors for request encoding, signing and sealing, and parsing of responses captured from a real Samba 4.19 server.
 
-Point it at a server for the integration suite (lifecycle, 24 MiB pipelined round trip, 200 concurrent operations on one connection, change notifications, reconnects, encrypted share):
+Point it at a server for the integration suite (lifecycle, 24 MiB pipelined round trip, 200 concurrent operations on one connection, change notifications, reconnects, symlinks, extended attributes as EAs and as named streams, encrypted share):
 
 ```sh
 BERTH_SMB_TEST_URL='smb://user:pass@127.0.0.1:4450/share' \
-BERTH_SMB_TEST_ENCRYPTED_URL='smb://user:pass@127.0.0.1:4450/secure' swift test
+BERTH_SMB_TEST_ENCRYPTED_URL='smb://user:pass@127.0.0.1:4450/secure' \
+BERTH_SMB_TEST_STREAMS_URL='smb://user:pass@127.0.0.1:4450/mac' swift test   # vfs objects = catia fruit streams_xattr
 ```
 
 `berth-smb` is a small CLI on top of the library:
@@ -69,4 +72,6 @@ BERTH_SMB_TEST_ENCRYPTED_URL='smb://user:pass@127.0.0.1:4450/secure' swift test
 swift run -c release berth-smb info  smb://user@nas.local/Media      # what was negotiated
 swift run -c release berth-smb bench smb://user@nas.local/Media --size 1024 --depth 32
 SMB_PASSWORD=… swift run berth-smb ls smb://user@nas.local/Media/Photos
+swift run berth-smb ln smb://user@nas.local/Media/Albums/Photos ../Photos   # symlink
+swift run berth-smb xattr smb://user@nas.local/Media/Photos/beach.heic       # list xattrs
 ```

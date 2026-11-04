@@ -16,6 +16,11 @@ public struct SMBItem: Sendable, Hashable {
     public var lastAccessTime: UInt64
     public var lastWriteTime: UInt64
     public var changeTime: UInt64
+    /// The reparse tag (`SMBReparseTag`) when `attributes` has `.reparsePoint`, otherwise 0.
+    public var reparseTag: UInt32
+    /// Size of the item's SMB extended attribute (EA) list, when the server reported it. It
+    /// changes whenever another client edits the EAs, so it works as a cheap change marker.
+    public var eaSize: UInt32?
 
     public var creationDate: Date? { FileTime.date(creationTime) }
     public var modificationDate: Date? { FileTime.date(lastWriteTime) }
@@ -25,9 +30,22 @@ public struct SMBItem: Sendable, Hashable {
     public var isReadOnly: Bool { attributes.contains(.readOnly) }
     public var isReparsePoint: Bool { attributes.contains(.reparsePoint) }
 
+    /// A symbolic link reparse point (NTFS or NFS style). XSym links are plain files on the
+    /// server; see `mightBeSymbolicLink` and `SMBClient.symbolicLinkDestination(at:)`.
+    public var isSymbolicLink: Bool {
+        isReparsePoint && (reparseTag == SMBReparseTag.symlink || reparseTag == SMBReparseTag.nfs)
+    }
+
+    /// Whether `SMBClient.symbolicLinkDestination(at:)` may find a link here: a symlink reparse
+    /// point, or a file exactly the size of an XSym link.
+    public var mightBeSymbolicLink: Bool {
+        isSymbolicLink || (!isDirectory && size == Int64(SymlinkCodec.xsymFileSize))
+    }
+
     /// For tests and previews.
     public init(path: String, fileID: UInt64, isDirectory: Bool, size: Int64 = 0, attributes: SMBFileAttributes = [],
-                creationTime: UInt64 = 0, lastAccessTime: UInt64 = 0, lastWriteTime: UInt64 = 0, changeTime: UInt64 = 0) {
+                creationTime: UInt64 = 0, lastAccessTime: UInt64 = 0, lastWriteTime: UInt64 = 0, changeTime: UInt64 = 0,
+                reparseTag: UInt32 = 0, eaSize: UInt32? = nil) {
         self.path = SMBPath.normalize(path)
         self.name = SMBPath.lastComponent(path)
         self.fileID = fileID
@@ -39,9 +57,12 @@ public struct SMBItem: Sendable, Hashable {
         self.lastAccessTime = lastAccessTime
         self.lastWriteTime = lastWriteTime
         self.changeTime = changeTime
+        self.reparseTag = reparseTag
+        self.eaSize = eaSize
+        if reparseTag != 0 { self.attributes.insert(.reparsePoint) }
     }
 
-    init(path: String, stat: SMBFileStat, fileID: UInt64) {
+    init(path: String, stat: SMBFileStat, fileID: UInt64, reparseTag: UInt32 = 0, eaSize: UInt32? = nil) {
         self.path = path
         self.name = SMBPath.lastComponent(path)
         self.fileID = fileID
@@ -53,6 +74,8 @@ public struct SMBItem: Sendable, Hashable {
         self.lastAccessTime = stat.lastAccessTime
         self.lastWriteTime = stat.lastWriteTime
         self.changeTime = stat.changeTime
+        self.reparseTag = stat.attributes.contains(.reparsePoint) ? reparseTag : 0
+        self.eaSize = eaSize
     }
 }
 
@@ -120,6 +143,17 @@ final class SMBTree: Sendable {
     let transactSize: Int
     let tuning: SMBClient.Tuning
 
+    /// What this share supports, learned on first use.
+    struct Features: Sendable {
+        var volume: SMBVolumeInfo?
+        /// Set once the server refused SMB EAs.
+        var extendedAttributesUnsupported = false
+        /// Set once the server refused to store a symlink reparse point.
+        var reparseSymlinksUnsupported = false
+    }
+
+    let features = Mutex(Features())
+
     init(connection: SMBConnection, treeID: UInt32, info: SMBConnectionInfo, tuning: SMBClient.Tuning) {
         let unit = info.supportsMultiCredit ? Int.max : SMB2.creditUnit
         // Keep each request well inside the credit window so I/O can always be scheduled.
@@ -158,6 +192,15 @@ final class SMBTree: Sendable {
     /// Closes a handle from a fresh task, so it goes out even if the caller was cancelled.
     func closeDetached(_ fileID: SMBFileID) {
         Task { _ = try? await self.send(Requests.close(fileID)) }
+    }
+
+    /// For compounds of CREATE, …, CLOSE: when the CREATE worked but the CLOSE didn't (some
+    /// servers fail every request after a failed one in a related compound), closes the handle.
+    func closeIfLeaked(_ responses: [SMBMessage]) {
+        guard let first = responses.first, !first.status.isError,
+              let last = responses.last, last.status.isError,
+              let handle = try? CreateResponse(first).fileID else { return }
+        closeDetached(handle)
     }
 }
 

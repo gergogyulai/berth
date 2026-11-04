@@ -241,6 +241,33 @@ enum Requests {
         return b.finish(creditCharge: SMB2.creditCharge(forPayload: length))
     }
 
+    /// A WRITE of a small in-memory buffer.
+    static func write(_ fileID: SMBFileID, offset: UInt64, data: [UInt8]) -> SMBRequest {
+        write(fileID, offset: offset, length: data.count) { buffer in
+            data.withUnsafeBytes { buffer.copyMemory(from: $0) }
+        }
+    }
+
+    /// An FSCTL (IOCTL with SMB2_0_IOCTL_IS_FSCTL).
+    static func fsctl(_ fileID: SMBFileID, code: UInt32, input: [UInt8] = [], maxOutput: Int) -> SMBRequest {
+        var b = RequestBuilder(.ioctl, bodyCapacity: 56 + input.count)
+        b.w.u16(57)
+        b.w.u16(0)
+        b.w.u32(code)
+        b.fileID(fileID)
+        let bufferOffset = UInt32(SMB2.headerSize + 56)
+        b.w.u32(bufferOffset)               // InputOffset
+        b.w.u32(UInt32(input.count))        // InputCount
+        b.w.u32(0)                          // MaxInputResponse
+        b.w.u32(bufferOffset)               // OutputOffset
+        b.w.u32(0)                          // OutputCount
+        b.w.u32(UInt32(maxOutput))          // MaxOutputResponse
+        b.w.u32(SMBIOCTLFlag.isFSCTL)
+        b.w.u32(0)
+        b.w.append(input)
+        return b.finish(creditCharge: SMB2.creditCharge(forPayload: max(input.count, maxOutput)))
+    }
+
     static func queryDirectory(_ fileID: SMBFileID, infoClass: SMBFileInfoClass, flags: UInt8,
                                pattern: String, outputLength: Int) -> SMBRequest {
         let name = NTLMClient.utf16LE(pattern)
@@ -269,7 +296,7 @@ enum Requests {
     }
 
     static func queryInfo(_ fileID: SMBFileID, type: SMBInfoType, infoClass: UInt8, outputLength: Int,
-                          additionalInformation: UInt32 = 0) -> SMBRequest {
+                          additionalInformation: UInt32 = 0, flags: UInt32 = 0) -> SMBRequest {
         var b = RequestBuilder(.queryInfo, bodyCapacity: 41)
         b.w.u16(41)
         b.w.u8(type.rawValue)
@@ -279,7 +306,7 @@ enum Requests {
         b.w.u16(0)
         b.w.u32(0)
         b.w.u32(additionalInformation)
-        b.w.u32(0)
+        b.w.u32(flags)
         b.fileID(fileID)
         b.w.u8(0)
         return b.finish(creditCharge: SMB2.creditCharge(forPayload: outputLength))
@@ -568,6 +595,20 @@ struct ReadResponse {
     }
 }
 
+struct IOCTLResponse {
+    /// The output buffer.
+    var output: ByteReader
+
+    init(_ m: SMBMessage) throws {
+        let r = m.reader
+        let o = m.body
+        guard try r.u16(o) == 49 else { throw SMBError.malformed("bad IOCTL response size") }
+        let offset = Int(try r.u32(o + 32))
+        let count = Int(try r.u32(o + 36))
+        output = count == 0 ? ByteReader(r.bytes, start: r.start, end: r.start) : try r.sub(offset, count)
+    }
+}
+
 struct WriteResponse {
     var count: Int
 
@@ -581,6 +622,8 @@ struct DirectoryEntry: Sendable {
     var name: String
     var fileID: UInt64
     var stat: SMBFileStat
+    /// The reparse tag when the entry is a reparse point, otherwise the size of its EA list.
+    var eaSizeOrReparseTag: UInt32
 }
 
 enum DirectoryParser {
@@ -592,9 +635,10 @@ enum DirectoryParser {
             let next = Int(try r.u32(position))
             let stat = try SMBFileStat(directoryEntry: r, at: position + 8)
             let nameLength = Int(try r.u32(position + 60))
+            let eaSize = try r.u32(position + 64)
             let fileID = try r.u64(position + 72)
             let name = try r.utf16(position + 80, byteCount: nameLength)
-            out.append(DirectoryEntry(name: name, fileID: fileID, stat: stat))
+            out.append(DirectoryEntry(name: name, fileID: fileID, stat: stat, eaSizeOrReparseTag: eaSize))
             if next == 0 { break }
             guard next >= 80 else { throw SMBError.malformed("bad directory entry chain") }
             position += next

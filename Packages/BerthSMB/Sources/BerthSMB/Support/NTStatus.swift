@@ -13,6 +13,10 @@ public struct NTStatus: RawRepresentable, Hashable, Sendable, CustomStringConver
     public static let notifyEnumDir = NTStatus(0x0000_010C)
     public static let bufferOverflow = NTStatus(0x8000_0005)
     public static let noMoreFiles = NTStatus(0x8000_0006)
+    public static let invalidEAName = NTStatus(0x8000_0013)
+    public static let eaListInconsistent = NTStatus(0x8000_0014)
+    public static let stoppedOnSymlink = NTStatus(0x8000_002D)
+    public static let invalidInfoClass = NTStatus(0xC000_0003)
     public static let invalidHandle = NTStatus(0xC000_0008)
     public static let invalidParameter = NTStatus(0xC000_000D)
     public static let noSuchFile = NTStatus(0xC000_000F)
@@ -27,6 +31,9 @@ public struct NTStatus: RawRepresentable, Hashable, Sendable, CustomStringConver
     public static let objectPathInvalid = NTStatus(0xC000_0039)
     public static let objectPathNotFound = NTStatus(0xC000_003A)
     public static let objectPathSyntaxBad = NTStatus(0xC000_003B)
+    public static let easNotSupported = NTStatus(0xC000_004F)
+    public static let eaTooLarge = NTStatus(0xC000_0050)
+    public static let noEAsOnFile = NTStatus(0xC000_0052)
     public static let sharingViolation = NTStatus(0xC000_0043)
     public static let deletePending = NTStatus(0xC000_0056)
     public static let privilegeNotHeld = NTStatus(0xC000_0061)
@@ -61,6 +68,11 @@ public struct NTStatus: RawRepresentable, Hashable, Sendable, CustomStringConver
     public static let passwordMustChange = NTStatus(0xC000_0224)
     public static let accountLockedOut = NTStatus(0xC000_0234)
     public static let pathNotCovered = NTStatus(0xC000_0257)
+    public static let notAReparsePoint = NTStatus(0xC000_0275)
+    public static let ioReparseTagInvalid = NTStatus(0xC000_0276)
+    public static let ioReparseTagMismatch = NTStatus(0xC000_0277)
+    public static let ioReparseDataInvalid = NTStatus(0xC000_0278)
+    public static let ioReparseTagNotHandled = NTStatus(0xC000_0279)
     public static let networkSessionExpired = NTStatus(0xC000_035C)
     public static let smbBadClusterDialect = NTStatus(0xC000_A0C1)
 
@@ -82,6 +94,11 @@ public struct NTStatus: RawRepresentable, Hashable, Sendable, CustomStringConver
 
     public var isPasswordExpired: Bool { self == .passwordExpired || self == .passwordMustChange }
 
+    /// The server (or the file system behind the share) lacks the feature that was asked for.
+    public var isUnsupportedFeature: Bool {
+        [.notSupported, .invalidDeviceRequest, .easNotSupported, .invalidInfoClass].contains(self)
+    }
+
     public var isNotFound: Bool {
         self == .objectNameNotFound || self == .objectPathNotFound || self == .noSuchFile || self == .badNetworkName
     }
@@ -94,6 +111,10 @@ public struct NTStatus: RawRepresentable, Hashable, Sendable, CustomStringConver
         case .notifyEnumDir: "STATUS_NOTIFY_ENUM_DIR"
         case .bufferOverflow: "STATUS_BUFFER_OVERFLOW"
         case .noMoreFiles: "STATUS_NO_MORE_FILES"
+        case .invalidEAName: "STATUS_INVALID_EA_NAME"
+        case .eaListInconsistent: "STATUS_EA_LIST_INCONSISTENT"
+        case .stoppedOnSymlink: "STATUS_STOPPED_ON_SYMLINK"
+        case .invalidInfoClass: "STATUS_INVALID_INFO_CLASS"
         case .invalidHandle: "STATUS_INVALID_HANDLE"
         case .invalidParameter: "STATUS_INVALID_PARAMETER"
         case .noSuchFile: "STATUS_NO_SUCH_FILE"
@@ -108,6 +129,9 @@ public struct NTStatus: RawRepresentable, Hashable, Sendable, CustomStringConver
         case .objectPathInvalid: "STATUS_OBJECT_PATH_INVALID"
         case .objectPathNotFound: "STATUS_OBJECT_PATH_NOT_FOUND"
         case .objectPathSyntaxBad: "STATUS_OBJECT_PATH_SYNTAX_BAD"
+        case .easNotSupported: "STATUS_EAS_NOT_SUPPORTED"
+        case .eaTooLarge: "STATUS_EA_TOO_LARGE"
+        case .noEAsOnFile: "STATUS_NO_EAS_ON_FILE"
         case .sharingViolation: "STATUS_SHARING_VIOLATION"
         case .deletePending: "STATUS_DELETE_PENDING"
         case .privilegeNotHeld: "STATUS_PRIVILEGE_NOT_HELD"
@@ -142,6 +166,11 @@ public struct NTStatus: RawRepresentable, Hashable, Sendable, CustomStringConver
         case .passwordMustChange: "STATUS_PASSWORD_MUST_CHANGE"
         case .accountLockedOut: "STATUS_ACCOUNT_LOCKED_OUT"
         case .pathNotCovered: "STATUS_PATH_NOT_COVERED"
+        case .notAReparsePoint: "STATUS_NOT_A_REPARSE_POINT"
+        case .ioReparseTagInvalid: "STATUS_IO_REPARSE_TAG_INVALID"
+        case .ioReparseTagMismatch: "STATUS_IO_REPARSE_TAG_MISMATCH"
+        case .ioReparseDataInvalid: "STATUS_IO_REPARSE_DATA_INVALID"
+        case .ioReparseTagNotHandled: "STATUS_IO_REPARSE_TAG_NOT_HANDLED"
         case .networkSessionExpired: "STATUS_NETWORK_SESSION_EXPIRED"
         case .smbBadClusterDialect: "STATUS_SMB_BAD_CLUSTER_DIALECT"
         default: String(format: "NTSTATUS 0x%08X", rawValue)
@@ -167,7 +196,9 @@ public struct NTStatus: RawRepresentable, Hashable, Sendable, CustomStringConver
         case .directoryNotEmpty: "The folder is not empty."
         case .diskFull: "The server is out of space."
         case .mediaWriteProtected: "The share is read-only."
-        case .notSupported, .invalidDeviceRequest: "The server does not support this operation."
+        case .notSupported, .invalidDeviceRequest, .easNotSupported, .invalidInfoClass:
+            "The server does not support this operation."
+        case .eaTooLarge: "The extended attributes are too large for the server."
         case .networkSessionExpired, .userSessionDeleted: "The server ended the session."
         case .networkNameDeleted: "The share was disconnected by the server."
         case .pathNotCovered: "The share is a DFS link, which Berth's SMB client does not follow."

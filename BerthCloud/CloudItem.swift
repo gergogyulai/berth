@@ -27,6 +27,7 @@ final class CloudItem: NSObject, NSFileProviderItem {
     var filename: String { record.isRoot ? rootName : record.name }
 
     var contentType: UTType {
+        if record.isSymbolicLink { return .symbolicLink }
         if record.isDirectory || record.isRoot { return .folder }
         let ext = (record.name as NSString).pathExtension
         return ext.isEmpty ? .data : (UTType(filenameExtension: ext) ?? .data)
@@ -42,13 +43,23 @@ final class CloudItem: NSObject, NSFileProviderItem {
             }
             return caps
         }
-        // Eviction is up to the system's content policy (allowsEvicting is deprecated).
+        // Eviction is up to the system's content policy (allowsEvicting is deprecated). Links
+        // follow the same rules as files: retargeting one is a content change.
         var caps: NSFileProviderItemCapabilities = [.allowsReading]
         if writable { caps.formUnion([.allowsWriting, .allowsRenaming, .allowsReparenting, .allowsDeleting]) }
         return caps
     }
 
-    var documentSize: NSNumber? { record.isDirectory ? nil : NSNumber(value: record.size) }
+    var documentSize: NSNumber? {
+        if let target = record.symlinkTarget { return NSNumber(value: target.utf8.count) }
+        return record.isDirectory ? nil : NSNumber(value: record.size)
+    }
+
+    var symlinkTargetPath: String? { record.symlinkTarget }
+
+    var extendedAttributes: [String: Data] { record.extendedAttributes }
+
+    var tagData: Data? { record.tagData }
 
     var creationDate: Date? { record.creationDate }
 

@@ -23,15 +23,27 @@ public final class CloudIndex: @unchecked Sendable {
         public var modificationTime: UInt64
         public var changeTime: UInt64
         public var attributes: UInt32
+        /// Set for symbolic links (reparse points or XSym files on the server).
+        public var symlinkTarget: String? = nil
+        /// Extended attributes as File Provider sees them (no tags, FinderInfo or resource fork).
+        public var extendedAttributes: [String: Data] = [:]
+        /// Finder tags, as File Provider's opaque `tagData`.
+        public var tagData: Data? = nil
+        /// What the server looked like when the extras above were read (see `ExtrasStamp`).
+        public var extrasStamp: ExtrasStamp? = nil
 
         public var isRoot: Bool { id == CloudIndex.rootID }
+        public var isSymbolicLink: Bool { symlinkTarget != nil }
         public var creationDate: Date? { FileTime.date(creationTime) }
         public var modificationDate: Date? { FileTime.date(modificationTime) }
         public var isHidden: Bool { attributes & SMBFileAttributes.hidden.rawValue != 0 }
         public var isReadOnly: Bool { attributes & SMBFileAttributes.readOnly.rawValue != 0 }
 
-        /// Changes whenever the bytes (may) have changed.
+        /// Changes whenever the bytes (may) have changed. A link's contents are its target.
         public var contentVersion: Data {
+            if let symlinkTarget {
+                return Data(SHA256.hash(data: Data(("link:" + symlinkTarget).utf8)).prefix(16))
+            }
             var w = Data(count: 16)
             w.withUnsafeMutableBytes { raw in
                 raw.storeBytes(of: UInt64(bitPattern: size).littleEndian, toByteOffset: 0, as: UInt64.self)
@@ -49,13 +61,60 @@ public final class CloudIndex: @unchecked Sendable {
             for value in [creationTime, modificationTime, changeTime, UInt64(attributes)] {
                 withUnsafeBytes(of: value.littleEndian) { hasher.update(bufferPointer: $0) }
             }
+            if let symlinkTarget { hasher.update(data: Data(("\u{1}" + symlinkTarget).utf8)) }
+            for (name, value) in extendedAttributes.sorted(by: { $0.key < $1.key }) {
+                hasher.update(data: Data(("\u{2}" + name + "\u{0}").utf8))
+                hasher.update(data: value)
+            }
+            if let tagData {
+                hasher.update(data: Data([3]))
+                hasher.update(data: tagData)
+            }
             return Data(hasher.finalize().prefix(16))
+        }
+
+        func sameExtras(as other: Record) -> Bool {
+            symlinkTarget == other.symlinkTarget && extendedAttributes == other.extendedAttributes && tagData == other.tagData
         }
 
         func sameContents(as other: Record) -> Bool {
             parentID == other.parentID && name == other.name && fileID == other.fileID && isDirectory == other.isDirectory
                 && size == other.size && creationTime == other.creationTime && modificationTime == other.modificationTime
                 && changeTime == other.changeTime && attributes == other.attributes
+        }
+    }
+
+    /// The server-side state that symlink targets and extended attributes were read from. When
+    /// a listing reports something different, they're read again.
+    public struct ExtrasStamp: Sendable, Hashable {
+        /// Timestamps, size and kind (writing a stream bumps the modification date).
+        public var times: Int64
+        /// The EA list size, when the server reports one (Samba doesn't touch the timestamps
+        /// when EAs change, but this does).
+        public var eaSize: Int64?
+
+        public init(_ item: SMBItem) {
+            var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+            for value in [item.lastWriteTime, item.changeTime, UInt64(bitPattern: item.size), UInt64(item.reparseTag),
+                          item.isDirectory ? 1 : 0] {
+                hash = (hash ^ value) &* 0x0000_0100_0000_01B3
+            }
+            times = Int64(bitPattern: hash)
+            eaSize = item.eaSize.map(Int64.init)
+        }
+
+        init(times: Int64, eaSize: Int64?) {
+            self.times = times
+            self.eaSize = eaSize
+        }
+
+        /// Whether extras read at `self` may be out of date for `item`.
+        public func isStale(for item: SMBItem) -> Bool {
+            let current = ExtrasStamp(item)
+            if current.times != times { return true }
+            // Results without an EA size (CREATE/CLOSE responses) say nothing about EAs.
+            guard let size = current.eaSize else { return false }
+            return size != eaSize
         }
     }
 
@@ -112,6 +171,14 @@ public final class CloudIndex: @unchecked Sendable {
             );
             CREATE INDEX IF NOT EXISTS changes_id ON changes(id, seq);
             CREATE TABLE IF NOT EXISTS dirty (path TEXT PRIMARY KEY NOT NULL, recursive INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS extras (
+                id TEXT PRIMARY KEY NOT NULL,
+                link TEXT,
+                xattrs BLOB,
+                tags BLOB,
+                stampTimes INTEGER,
+                stampEA INTEGER
+            );
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL);
             """)
         if let existing = try database.scalarText("SELECT value FROM meta WHERE key = 'epoch'") {
@@ -132,18 +199,39 @@ public final class CloudIndex: @unchecked Sendable {
 
     // MARK: Lookups
 
-    private static let columns = "id, parent, name, fileID, isDir, size, btime, mtime, ctime, attrs"
+    /// Items with their extras. Filter with `items.`-qualified column names.
+    private static let select = """
+        SELECT items.id, items.parent, items.name, items.fileID, items.isDir, items.size, items.btime, items.mtime,
+               items.ctime, items.attrs, extras.link, extras.xattrs, extras.tags, extras.stampTimes, extras.stampEA
+        FROM items LEFT JOIN extras ON extras.id = items.id
+        """
 
     private static func record(_ s: SQLiteStatement) -> Record {
-        Record(id: s.text(0), parentID: s.text(1), name: s.text(2), fileID: UInt64(bitPattern: s.int(3)),
-               isDirectory: s.int(4) != 0, size: s.int(5), creationTime: UInt64(bitPattern: s.int(6)),
-               modificationTime: UInt64(bitPattern: s.int(7)), changeTime: UInt64(bitPattern: s.int(8)),
-               attributes: UInt32(truncatingIfNeeded: s.int(9)))
+        var record = Record(id: s.text(0), parentID: s.text(1), name: s.text(2), fileID: UInt64(bitPattern: s.int(3)),
+                            isDirectory: s.int(4) != 0, size: s.int(5), creationTime: UInt64(bitPattern: s.int(6)),
+                            modificationTime: UInt64(bitPattern: s.int(7)), changeTime: UInt64(bitPattern: s.int(8)),
+                            attributes: UInt32(truncatingIfNeeded: s.int(9)))
+        record.symlinkTarget = s.optionalText(10)
+        if let blob = s.blob(11) { record.extendedAttributes = decodeAttributes(blob) }
+        record.tagData = s.blob(12)
+        if let times = s.optionalInt(13) { record.extrasStamp = ExtrasStamp(times: times, eaSize: s.optionalInt(14)) }
+        return record
+    }
+
+    static func encodeAttributes(_ attributes: [String: Data]) -> Data? {
+        guard !attributes.isEmpty else { return nil }
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        return try? encoder.encode(attributes)
+    }
+
+    static func decodeAttributes(_ data: Data) -> [String: Data] {
+        (try? PropertyListDecoder().decode([String: Data].self, from: data)) ?? [:]
     }
 
     public func record(id: String) throws -> Record? {
         try locked {
-            let s = try db.cached("SELECT \(Self.columns) FROM items WHERE id = ?").bind([.text(id)])
+            let s = try db.cached("\(Self.select) WHERE items.id = ?").bind([.text(id)])
             return try s.step() ? Self.record(s) : nil
         }
     }
@@ -151,7 +239,7 @@ public final class CloudIndex: @unchecked Sendable {
     public func record(fileID: UInt64) throws -> Record? {
         guard fileID != 0 else { return nil }
         return try locked {
-            let s = try db.cached("SELECT \(Self.columns) FROM items WHERE fileID = ? LIMIT 1")
+            let s = try db.cached("\(Self.select) WHERE items.fileID = ? LIMIT 1")
                 .bind([.int(Int64(bitPattern: fileID))])
             return try s.step() ? Self.record(s) : nil
         }
@@ -159,7 +247,7 @@ public final class CloudIndex: @unchecked Sendable {
 
     public func children(of parentID: String) throws -> [Record] {
         try locked {
-            let s = try db.cached("SELECT \(Self.columns) FROM items WHERE parent = ? AND id != parent").bind([.text(parentID)])
+            let s = try db.cached("\(Self.select) WHERE items.parent = ? AND items.id != items.parent").bind([.text(parentID)])
             var out: [Record] = []
             while try s.step() { out.append(Self.record(s)) }
             return out
@@ -168,7 +256,7 @@ public final class CloudIndex: @unchecked Sendable {
 
     public func child(of parentID: String, named name: String) throws -> Record? {
         try locked {
-            let s = try db.cached("SELECT \(Self.columns) FROM items WHERE parent = ? AND folded = ? AND id != parent LIMIT 1")
+            let s = try db.cached("\(Self.select) WHERE items.parent = ? AND items.folded = ? AND items.id != items.parent LIMIT 1")
                 .bind([.text(parentID), .text(Self.fold(name))])
             return try s.step() ? Self.record(s) : nil
         }
@@ -216,8 +304,7 @@ public final class CloudIndex: @unchecked Sendable {
         try locked {
             var root = Self.makeRecord(item, id: Self.rootID, parentID: Self.rootID)
             root.name = ""
-            try write(root, logIfChanged: true)
-            return root
+            return try write(root, logIfChanged: true)
         }
     }
 
@@ -231,8 +318,7 @@ public final class CloudIndex: @unchecked Sendable {
             if existing == nil { existing = try self.record(fileID: item.fileID) }
             if existing == nil { existing = try child(of: parentID, named: item.name) }
             let fresh = Self.makeRecord(item, id: existing?.id ?? id ?? Self.newID(), parentID: parentID)
-            try write(fresh, logIfChanged: true)
-            return fresh
+            return try write(fresh, logIfChanged: true)
         }
     }
 
@@ -257,8 +343,7 @@ public final class CloudIndex: @unchecked Sendable {
                     }
                     let fresh = Self.makeRecord(item, id: id ?? Self.newID(), parentID: parentID)
                     matched.insert(fresh.id)
-                    try write(fresh, logIfChanged: true)
-                    results.append(fresh)
+                    results.append(try write(fresh, logIfChanged: true))
                 }
                 for stale in existing where !matched.contains(stale.id) {
                     // Gone, unless an earlier step of this pass moved it into this directory.
@@ -283,8 +368,45 @@ public final class CloudIndex: @unchecked Sendable {
     public func replace(id: String, with item: SMBItem, parentID: String) throws -> Record {
         try locked {
             let fresh = Self.makeRecord(item, id: id, parentID: parentID)
-            try write(fresh, logIfChanged: true)
-            return fresh
+            return try write(fresh, logIfChanged: true)
+        }
+    }
+
+    /// Stores what was read (or set) besides the plain attributes: the link target, extended
+    /// attributes and tags. Logs a change when any of them differ. `stamp` nil keeps the old one.
+    @discardableResult
+    public func setExtras(id: String, symlinkTarget: String?, extendedAttributes: [String: Data], tagData: Data?,
+                          stamp: ExtrasStamp?) throws -> Record? {
+        try locked {
+            guard var record = try self.record(id: id) else { return nil }
+            let previous = record
+            record.symlinkTarget = symlinkTarget
+            record.extendedAttributes = extendedAttributes
+            record.tagData = tagData
+            if let stamp { record.extrasStamp = stamp }
+            if previous.sameExtras(as: record) && previous.extrasStamp == record.extrasStamp { return record }
+            var stampValues: [SQLValue] = [.null, .null]
+            if let stamp = record.extrasStamp {
+                stampValues = [.int(stamp.times), stamp.eaSize.map { SQLValue.int($0) } ?? .null]
+            }
+            try db.transaction {
+                try db.cached("""
+                    INSERT INTO extras(id, link, xattrs, tags, stampTimes, stampEA) VALUES(?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET link = excluded.link, xattrs = excluded.xattrs, tags = excluded.tags,
+                        stampTimes = excluded.stampTimes, stampEA = excluded.stampEA
+                    """).run([.text(id), symlinkTarget.map { SQLValue.text($0) } ?? .null,
+                              Self.encodeAttributes(extendedAttributes).map { SQLValue.blob($0) } ?? .null,
+                              tagData.map { SQLValue.blob($0) } ?? .null] + stampValues)
+                if !previous.sameExtras(as: record) {
+                    // A link is never a directory, whatever the server's attributes say.
+                    if record.isSymbolicLink && record.isDirectory {
+                        record.isDirectory = false
+                        try db.cached("UPDATE items SET isDir = 0 WHERE id = ?").run([.text(id)])
+                    }
+                    try db.cached("INSERT INTO changes(id, deleted) VALUES(?, 0)").run([.text(id)])
+                }
+            }
+            return record
         }
     }
 
@@ -297,16 +419,28 @@ public final class CloudIndex: @unchecked Sendable {
             while try s.step() { stack.append(s.text(0)) }
         }
         let delete = try db.cached("DELETE FROM items WHERE id = ?")
+        let deleteExtras = try db.cached("DELETE FROM extras WHERE id = ?")
         let log = try db.cached("INSERT INTO changes(id, deleted) VALUES(?, 1)")
         for item in all {
             try delete.run([.text(item)])
+            try deleteExtras.run([.text(item)])
             try log.run([.text(item)])
         }
     }
 
-    private func write(_ record: Record, logIfChanged: Bool) throws {
+    /// Writes the plain attributes; the result carries the extras already stored for the item.
+    @discardableResult
+    private func write(_ fresh: Record, logIfChanged: Bool) throws -> Record {
+        var record = fresh
         let previous = try self.record(id: record.id)
-        if let previous, previous.sameContents(as: record) { return }
+        if let previous {
+            record.symlinkTarget = previous.symlinkTarget
+            record.extendedAttributes = previous.extendedAttributes
+            record.tagData = previous.tagData
+            record.extrasStamp = previous.extrasStamp
+            if record.isSymbolicLink { record.isDirectory = false }
+        }
+        if let previous, previous.sameContents(as: record) { return record }
         try db.cached("""
             INSERT INTO items(id, parent, name, folded, fileID, isDir, size, btime, mtime, ctime, attrs)
             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -322,11 +456,12 @@ public final class CloudIndex: @unchecked Sendable {
         if logIfChanged {
             try db.cached("INSERT INTO changes(id, deleted) VALUES(?, 0)").run([.text(record.id)])
         }
+        return record
     }
 
     static func makeRecord(_ item: SMBItem, id: String, parentID: String) -> Record {
-        Record(id: id, parentID: parentID, name: item.name, fileID: item.fileID, isDirectory: item.isDirectory,
-               size: item.isDirectory ? 0 : item.size, creationTime: item.creationTime,
+        Record(id: id, parentID: parentID, name: item.name, fileID: item.fileID,
+               isDirectory: item.isDirectory && !item.isSymbolicLink, size: item.isDirectory ? 0 : item.size, creationTime: item.creationTime,
                modificationTime: item.lastWriteTime, changeTime: item.changeTime, attributes: item.attributes.rawValue)
     }
 
@@ -390,7 +525,7 @@ public final class CloudIndex: @unchecked Sendable {
     /// Every record, for working-set enumeration after an anchor reset.
     public func allRecords(offset: Int, limit: Int) throws -> [Record] {
         try locked {
-            let s = try db.cached("SELECT \(Self.columns) FROM items WHERE id != ? ORDER BY rowid LIMIT ? OFFSET ?")
+            let s = try db.cached("\(Self.select) WHERE items.id != ? ORDER BY items.rowid LIMIT ? OFFSET ?")
                 .bind([.text(Self.rootID), .int(Int64(limit)), .int(Int64(offset))])
             var out: [Record] = []
             while try s.step() { out.append(Self.record(s)) }
@@ -469,6 +604,7 @@ enum SQLValue {
     case int(Int64)
     case real(Double)
     case text(String)
+    case blob(Data)
     case null
 }
 
@@ -582,6 +718,10 @@ final class SQLiteStatement {
             case .int(let v): sqlite3_bind_int64(handle, index, v)
             case .real(let v): sqlite3_bind_double(handle, index, v)
             case .text(let v): sqlite3_bind_text(handle, index, v, -1, Self.transient)
+            case .blob(let v):
+                _ = v.withUnsafeBytes { raw in
+                    sqlite3_bind_blob(handle, index, raw.baseAddress, Int32(raw.count), Self.transient)
+                }
             case .null: sqlite3_bind_null(handle, index)
             }
         }
@@ -607,5 +747,16 @@ final class SQLiteStatement {
     func text(_ column: Int32) -> String {
         guard let pointer = sqlite3_column_text(handle, column) else { return "" }
         return String(cString: pointer)
+    }
+
+    func isNull(_ column: Int32) -> Bool { sqlite3_column_type(handle, column) == SQLITE_NULL }
+    func optionalText(_ column: Int32) -> String? { isNull(column) ? nil : text(column) }
+    func optionalInt(_ column: Int32) -> Int64? { isNull(column) ? nil : int(column) }
+
+    func blob(_ column: Int32) -> Data? {
+        guard !isNull(column) else { return nil }
+        let count = Int(sqlite3_column_bytes(handle, column))
+        guard count > 0, let pointer = sqlite3_column_blob(handle, column) else { return Data() }
+        return Data(bytes: pointer, count: count)
     }
 }
