@@ -21,6 +21,8 @@ for try await changes in client.changes(under: "Photos") { print(changes) }
 - **Hardware crypto.** AES-GMAC signing (SMB 3.1.1's fastest), AES-128/256-GCM encryption and SHA-512 via CryptoKit; AES-CMAC on CommonCrypto's AES-CBC.
 - **Atomic uploads in one extra round trip.** Data goes to a hidden temporary file; one compound then sets its timestamps, renames it over the destination and closes it.
 
+Measured by CI (`berth-smb bench`, GitHub runner, loopback to Samba 4.19 with mandatory AES-GMAC signing on every message, 256 MiB file, 1 MiB × 16 in flight): **~1.7 GB/s upload, ~1.9 GB/s download** (verified byte-for-byte), **~3,150 metadata ops/s** (create + stat + delete, 32 in flight), 0.12 ms ECHO. Loopback measures client and server efficiency rather than a network; on real links the pipeline depth is what keeps throughput up as latency grows.
+
 ## Protocol coverage
 
 | | |

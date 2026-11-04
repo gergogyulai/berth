@@ -42,7 +42,8 @@ final class CloudItem: NSObject, NSFileProviderItem {
             }
             return caps
         }
-        var caps: NSFileProviderItemCapabilities = [.allowsReading, .allowsEvicting]
+        // Eviction is up to the system's content policy (allowsEvicting is deprecated).
+        var caps: NSFileProviderItemCapabilities = [.allowsReading]
         if writable { caps.formUnion([.allowsWriting, .allowsRenaming, .allowsReparenting, .allowsDeleting]) }
         return caps
     }
