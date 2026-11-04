@@ -125,6 +125,7 @@ func printDetail(_ s: IPC.ShareInfo) {
     row("Group", s.group)
     row("Server", s.url)
     row("Address", s.address)
+    row("Backend", s.backend.map { $0 == "cloud" ? "Berth Cloud (File Provider + Berth SMB)" : "macOS SMB" })
     row("Mounted at", s.mountPoint)
     row("Latency", s.latencyMs.map { String(format: "%.0f ms", $0) })
     row("Error", s.error)

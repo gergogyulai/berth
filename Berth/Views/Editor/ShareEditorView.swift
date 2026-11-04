@@ -41,6 +41,7 @@ struct ShareEditorView: View {
                 headerSection
                 serverSection
                 signInSection
+                backendSection
                 mountingSection
                 optionsSection
                 wakeSection
@@ -168,6 +169,36 @@ struct ShareEditorView: View {
         }
     }
 
+    private var backendSection: some View {
+        Section {
+            Picker("Connect Using", selection: share.backend) {
+                ForEach(ShareBackend.allCases, id: \.self) { backend in
+                    Label(backend.title, systemImage: backend.symbol).tag(backend)
+                }
+            }
+            if draft.share.backend == .cloud {
+                Toggle(isOn: share.cloud.requireEncryption) {
+                    Text("Always encrypt")
+                    Text("AES-GCM for all traffic, even when the server doesn’t ask for it (SMB 3.1.1).")
+                }
+                Toggle(isOn: share.cloud.requireSigning) {
+                    Text("Require signing")
+                    Text("Refuse to connect unless every message is signed.")
+                }
+            }
+        } header: {
+            Text("Backend")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(draft.share.backend.detail).foregroundStyle(.secondary)
+                if draft.share.backend == .cloud && !CloudVolumes.isAvailable {
+                    Label(CloudVolumes.unavailableMessage, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+    }
+
     private var mountingSection: some View {
         Section {
             Picker("Mount Automatically", selection: share.autoMount) {
@@ -220,6 +251,17 @@ struct ShareEditorView: View {
 
     private var optionsSection: some View {
         Section("Options", isExpanded: $showOptions) {
+            if draft.share.backend == .cloud {
+                Toggle("Read-only", isOn: share.options.readOnly)
+            } else {
+                volumeOptions
+            }
+        }
+    }
+
+    /// Options that only make sense for a mounted volume (macOS SMB backend).
+    @ViewBuilder private var volumeOptions: some View {
+        Group {
             Picker("Mount Point", selection: Binding(
                 get: { draft.share.mountLocation.customPath == nil ? 0 : 1 },
                 set: { draft.share.mountLocation = $0 == 0 ? .automatic : .custom(path: draft.share.mountLocation.customPath ?? defaultCustomPath) }
@@ -306,13 +348,19 @@ struct ShareEditorView: View {
             if let preset = draft.share.options.preset {
                 Text(preset.summary).foregroundStyle(.secondary)
             }
-            HStack {
-                Text("Applies to the whole server from the next mount.").foregroundStyle(.secondary)
-                Spacer()
-                Button("SMB Settings…") { model.showSettings(tab: .smb) }
-                    .buttonStyle(.link)
+            if draft.share.backend == .cloud {
+                Text("Tunes Berth’s SMB client for this share: request size, requests in flight and credit window. Without a preset it adapts to LAN or Tailscale automatically.")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            } else {
+                HStack {
+                    Text("Applies to the whole server from the next mount.").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("SMB Settings…") { model.showSettings(tab: .smb) }
+                        .buttonStyle(.link)
+                }
+                .font(.callout)
             }
-            .font(.callout)
         }
     }
 

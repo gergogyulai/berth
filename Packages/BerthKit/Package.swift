@@ -7,14 +7,22 @@ let package = Package(
     products: [
         .library(name: "BerthKit", targets: ["BerthKit"]),
     ],
+    dependencies: [
+        .package(path: "../BerthSMB"),
+    ],
     targets: [
         .target(
             name: "BerthKit",
+            dependencies: [
+                .product(name: "BerthSMB", package: "BerthSMB"),
+            ],
             linkerSettings: [
                 .linkedFramework("NetFS"),
                 .linkedFramework("DiskArbitration"),
                 .linkedFramework("CoreWLAN"),
                 .linkedFramework("SystemConfiguration"),
+                .linkedFramework("FileProvider"),
+                .linkedLibrary("sqlite3"),
             ]
         ),
         .testTarget(name: "BerthKitTests", dependencies: ["BerthKit"]),

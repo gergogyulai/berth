@@ -44,6 +44,10 @@ jobs:
         working-directory: Packages/BerthKit
         run: swift test
 
+      - name: Test SMB client
+        working-directory: Packages/BerthSMB
+        run: swift test
+
       - name: Import signing certificate
         if: env.HAS_CERT == 'true'
         env:

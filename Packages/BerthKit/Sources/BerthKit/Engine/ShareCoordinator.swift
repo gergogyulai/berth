@@ -86,6 +86,10 @@ public final class ShareCoordinator {
             self?.log.add(.info, "Configuration updated from another Mac")
         }
 
+        CloudVolumes.shared.log = { [weak self] level, message, shareID in
+            self?.log.add(level, message, share: self?.share(shareID))
+        }
+
         adoptExistingMounts()
         log.add(.info, "Berth started")
 
@@ -95,6 +99,7 @@ public final class ShareCoordinator {
                 try? await Task.sleep(for: .milliseconds(100))
             }
             log.add(.info, "Network: \(network.snapshot.summary)")
+            await adoptCloudVolumes()
             if prefs.autoMountEnabled {
                 for share in store.config.shares where share.autoMount != .off {
                     let rt = runtime(for: share.id)
@@ -247,6 +252,18 @@ public final class ShareCoordinator {
         syncRuntimes()
         guard let share = share(id) else { return }
         let rt = runtime(for: id)
+        if let mounted = rt.mountedBackend, mounted != share.backend, rt.state.isMounted, rt.operation == nil {
+            // Switched between the macOS client and Berth Cloud: take the old one down first.
+            log.add(.info, "Switching to \(share.backend.title)", share: share)
+            rt.operation = Task { [weak self] in
+                guard let self else { return }
+                _ = await performUnmount(id, force: true, reason: "Switching backend", isInternal: true)
+                if mounted == .cloud { await CloudVolumes.shared.removeDomain(id) }
+                rt.operation = nil
+                if rt.wantsMounted { connect(id, reason: .user) } else { rt.state = .disconnected }
+            }
+            return
+        }
         if !rt.state.isMounted, rt.state != .disconnected, !rt.isBusy {
             // Retry immediately with the new settings.
             rt.retryTask?.cancel()
@@ -265,6 +282,9 @@ public final class ShareCoordinator {
     public func remove(_ id: UUID, unmountFirst: Bool) async {
         if unmountFirst, runtime(for: id).state.isMounted {
             await unmount(id, force: true)
+        }
+        if share(id)?.backend == .cloud || runtime(for: id).mountedBackend == .cloud {
+            await CloudVolumes.shared.removeDomain(id)
         }
         runtimes[id]?.retryTask?.cancel()
         runtimes[id]?.operation?.cancel()
@@ -298,7 +318,8 @@ public final class ShareCoordinator {
         }
 
         // Already mounted (by us earlier, by Finder, or by another tool)?
-        if let entry = MountTable.find(share, knownMountPoint: rt.mountPoint, in: MountTable.smbMounts()) {
+        if share.backend == .system,
+           let entry = MountTable.find(share, knownMountPoint: rt.mountPoint, in: MountTable.smbMounts()) {
             adopt(entry, for: share, announce: reason == .user)
             return
         }
@@ -420,7 +441,15 @@ public final class ShareCoordinator {
         )
 
         do {
-            let path = try await Mounter.mount(request)
+            let path: String
+            switch share.backend {
+            case .system:
+                path = try await Mounter.mount(request)
+            case .cloud:
+                // Same inputs, same errors, different client: BerthSMB + a File Provider location.
+                path = try await CloudVolumes.shared.mount(share, address: address, fallbacks: candidates,
+                                                           password: password, timeout: .seconds(prefs.mountTimeout))
+            }
             guard rt.wantsMounted else {
                 // The user changed their mind while we were connecting.
                 rt.mountPoint = path
@@ -441,6 +470,7 @@ public final class ShareCoordinator {
         let rt = runtime(for: share.id)
         rt.state = .mounted
         rt.mountPoint = path
+        rt.mountedBackend = share.backend
         rt.connectedSince = Date()
         rt.attempt = 0
         rt.lastError = nil
@@ -544,7 +574,7 @@ public final class ShareCoordinator {
 
     private func adoptExistingMounts() {
         let entries = MountTable.smbMounts()
-        for share in store.config.shares {
+        for share in store.config.shares where share.backend == .system {
             if let entry = MountTable.find(share, in: entries) { adopt(entry, for: share, announce: false) }
         }
     }
@@ -554,6 +584,9 @@ public final class ShareCoordinator {
     private func performUnmount(_ id: UUID, force: Bool, reason: String, isInternal: Bool = false) async -> UnmountOutcome {
         let rt = runtime(for: id)
         let share = share(id)
+        if (rt.mountedBackend ?? share?.backend) == .cloud {
+            return await performCloudUnmount(id, share: share, reason: reason, isInternal: isInternal)
+        }
         let path = rt.mountPoint ?? share.flatMap { MountTable.find($0, in: MountTable.smbMounts())?.mountPoint }
         guard let path else {
             if !rt.isBusy || rt.state.isProblem || !isInternal { rt.state = .disconnected }
@@ -592,11 +625,57 @@ public final class ShareCoordinator {
         }
 
         rt.mountPoint = nil
+        rt.mountedBackend = nil
         rt.connectedSince = nil
         rt.staleSince = nil
         if !isInternal || rt.state == .unmounting { rt.state = .disconnected }
         if let share {
             log.add(.info, "\(reason)\(useForce ? " (forced)" : "")", share: share)
+            if !isInternal { onEvent?(.disconnected(share, reason: reason)) }
+        }
+        return .unmounted
+    }
+
+    // MARK: - Cloud volumes
+
+    /// Cloud locations survive app restarts (like mounts do). Re-establish Berth's side for the
+    /// ones still connected: the SMB session, the change watch and the extension's configuration.
+    private func adoptCloudVolumes() async {
+        for share in store.config.shares where share.backend == .cloud {
+            let rt = runtime(for: share.id)
+            guard !rt.state.isMounted, rt.operation == nil,
+                  let path = await CloudVolumes.shared.connectedPath(share.id) else { continue }
+            log.add(.info, "Found connected cloud location at \(path)", share: share)
+            rt.mountPoint = path
+            rt.wantsMounted = true
+            connect(share.id, reason: .launch)
+        }
+    }
+
+    private func performCloudUnmount(_ id: UUID, share: Share?, reason: String, isInternal: Bool) async -> UnmountOutcome {
+        let rt = runtime(for: id)
+        guard rt.state.isMounted || rt.mountPoint != nil else {
+            if !rt.isBusy || rt.state.isProblem || !isInternal { rt.state = .disconnected }
+            return .notMounted
+        }
+        let previous = rt.state
+        rt.state = .unmounting
+        rt.expectingUnmount = true
+        defer { rt.expectingUnmount = false }
+        do {
+            try await CloudVolumes.shared.unmount(id, reason: reason)
+        } catch {
+            rt.state = previous
+            if let share { log.add(.error, error.message, share: share) }
+            return .failed(error.message)
+        }
+        rt.mountPoint = nil
+        rt.mountedBackend = nil
+        rt.connectedSince = nil
+        rt.staleSince = nil
+        if !isInternal || rt.state == .unmounting { rt.state = .disconnected }
+        if let share {
+            log.add(.info, reason, share: share)
             if !isInternal { onEvent?(.disconnected(share, reason: reason)) }
         }
         return .unmounted
@@ -623,13 +702,14 @@ public final class ShareCoordinator {
         for share in store.config.shares {
             let rt = runtime(for: share.id)
             if rt.state.isMounted, rt.operation == nil {
-                if let path = rt.mountPoint, !entries.contains(where: { $0.mountPoint == path }) {
+                if rt.mountedBackend != .cloud, let path = rt.mountPoint, !entries.contains(where: { $0.mountPoint == path }) {
                     // Gone without a DiskArbitration event (can happen after sleep).
                     mountVanished(share, path: path)
                 } else {
                     probe(share)
                 }
-            } else if !rt.state.isMounted, rt.operation == nil, let entry = MountTable.find(share, in: entries) {
+            } else if !rt.state.isMounted, rt.operation == nil, share.backend == .system,
+                      let entry = MountTable.find(share, in: entries) {
                 adopt(entry, for: share, announce: false)
             }
         }
@@ -639,10 +719,17 @@ public final class ShareCoordinator {
         let rt = runtime(for: share.id)
         guard let path = rt.mountPoint, !rt.probeInFlight else { return }
         rt.probeInFlight = true
+        let isCloud = rt.mountedBackend == .cloud
         Task {
-            let result = await FileSystemProbe.probe(mountPoint: path, timeout: .seconds(prefs.probeTimeout))
+            let result = isCloud
+                ? await CloudVolumes.shared.probe(share.id, timeout: .seconds(prefs.probeTimeout))
+                : await FileSystemProbe.probe(mountPoint: path, timeout: .seconds(prefs.probeTimeout))
             rt.probeInFlight = false
             guard rt.mountPoint == path, rt.operation == nil else { return }
+            if isCloud, result == .notMounted {
+                // The location was removed in Finder or System Settings: respect it like an eject.
+                rt.ejectRequestedAt = Date()
+            }
             switch result {
             case .alive(let latency):
                 rt.recordLatency(latency)
@@ -681,6 +768,19 @@ public final class ShareCoordinator {
     private func recoverStale(_ share: Share) {
         let rt = runtime(for: share.id)
         guard rt.operation == nil else { return }
+        if rt.mountedBackend == .cloud {
+            // Nothing local can hang on a cloud location; just replace the SMB session (and pick
+            // the best address again). The domain stays connected and keeps serving its cache.
+            rt.operation = Task { [weak self] in
+                guard let self else { return }
+                log.add(.warning, "Server not answering; reconnecting the cloud session", share: share)
+                CloudVolumes.shared.dropSession(share.id)
+                rt.state = .reconnecting
+                rt.operation = nil
+                if rt.wantsMounted { connect(share.id, reason: .reconnect) } else { rt.state = .disconnected }
+            }
+            return
+        }
         rt.operation = Task { [weak self] in
             guard let self else { return }
             log.add(.warning, "Force-unmounting dead mount", share: share)
@@ -695,6 +795,7 @@ public final class ShareCoordinator {
         let rt = runtime(for: share.id)
         guard rt.mountPoint == path, !rt.expectingUnmount else { return }
         rt.mountPoint = nil
+        rt.mountedBackend = nil
         rt.connectedSince = nil
         rt.staleSince = nil
         let ejected = rt.ejectRequestedAt.map { Date().timeIntervalSince($0) < 60 } ?? false
@@ -734,7 +835,7 @@ public final class ShareCoordinator {
         case .appeared:
             // Something mounted a network volume — maybe one of ours via Finder.
             let entries = MountTable.smbMounts()
-            for share in store.config.shares {
+            for share in store.config.shares where share.backend == .system {
                 let rt = runtime(for: share.id)
                 guard !rt.state.isMounted, rt.operation == nil else { continue }
                 if let entry = MountTable.find(share, in: entries) { adopt(entry, for: share, announce: false) }
@@ -795,7 +896,8 @@ public final class ShareCoordinator {
             rt.retryTask = nil
         }
         guard prefs.unmountBeforeSleep else { completion(); return }
-        let mounted = store.config.shares.filter { runtime(for: $0.id).state.isMounted }
+        // Cloud locations can't hang on a dead server, so they stay connected through sleep.
+        let mounted = store.config.shares.filter { runtime(for: $0.id).state.isMounted && runtime(for: $0.id).mountedBackend != .cloud }
         guard !mounted.isEmpty else { completion(); return }
         Task {
             let tasks = mounted.map { share in

@@ -23,6 +23,9 @@ public final class ShareRuntime: Identifiable {
     public internal(set) var wantsMounted = false
     /// Set when the user mounted explicitly despite the network rule; cleared on unmount.
     public internal(set) var overridesRule = false
+    /// The backend of the current (or last) mount. Lets Berth unmount correctly after the share
+    /// was switched to the other backend.
+    public internal(set) var mountedBackend: ShareBackend?
 
     // Engine bookkeeping (not observed).
     @ObservationIgnored var operation: Task<Void, Never>?

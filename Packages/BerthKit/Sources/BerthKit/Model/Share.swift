@@ -21,6 +21,10 @@ public struct Share: Codable, Identifiable, Hashable, Sendable {
     public var pinToSidebar: Bool
     public var applyVolumeIcon: Bool
     public var notes: String
+    /// Which SMB client serves the share: macOS's (a mounted volume) or Berth's own (a cloud location).
+    public var backend: ShareBackend
+    /// Settings that only apply to the cloud backend.
+    public var cloud: CloudOptions
 
     public init(
         id: UUID = UUID(),
@@ -39,7 +43,9 @@ public struct Share: Codable, Identifiable, Hashable, Sendable {
         wakeOnLAN: WakeOnLANConfig = WakeOnLANConfig(),
         pinToSidebar: Bool = false,
         applyVolumeIcon: Bool = false,
-        notes: String = ""
+        notes: String = "",
+        backend: ShareBackend = .system,
+        cloud: CloudOptions = CloudOptions()
     ) {
         self.id = id
         self.displayName = displayName
@@ -58,11 +64,14 @@ public struct Share: Codable, Identifiable, Hashable, Sendable {
         self.pinToSidebar = pinToSidebar
         self.applyVolumeIcon = applyVolumeIcon
         self.notes = notes
+        self.backend = backend
+        self.cloud = cloud
     }
 
     enum CodingKeys: String, CodingKey {
         case id, displayName, addresses, shareName, auth, username, domain, icon, groupID
         case mountLocation, autoMount, options, networkRule, wakeOnLAN, pinToSidebar, applyVolumeIcon, notes
+        case backend, cloud
     }
 
     // Lenient decoding: every field except the id is optional on disk, so configs written
@@ -87,6 +96,8 @@ public struct Share: Codable, Identifiable, Hashable, Sendable {
         pinToSidebar = try c.value(.pinToSidebar, default: d.pinToSidebar)
         applyVolumeIcon = try c.value(.applyVolumeIcon, default: d.applyVolumeIcon)
         notes = try c.value(.notes, default: d.notes)
+        backend = try c.value(.backend, default: d.backend)
+        cloud = try c.value(.cloud, default: d.cloud)
     }
 
     /// The name shown everywhere in the UI.
@@ -130,6 +141,63 @@ public struct Share: Codable, Identifiable, Hashable, Sendable {
         !shareName.trimmingCharacters(in: .whitespaces).isEmpty
             && addresses.contains { !$0.host.trimmingCharacters(in: .whitespaces).isEmpty }
             && (auth != .registered || !username.isEmpty)
+    }
+}
+
+/// The SMB client behind a share.
+public enum ShareBackend: String, Codable, CaseIterable, Sendable {
+    /// macOS's SMB client (smbfs via NetFS): a mounted volume under /Volumes.
+    case system
+    /// Berth's own SMB client behind a File Provider location, like iCloud Drive: files download
+    /// on demand, uploads happen in the background, and Finder never hangs on a dead server.
+    case cloud
+
+    public var title: String {
+        switch self {
+        case .system: "macOS SMB (Volume)"
+        case .cloud: "Berth Cloud"
+        }
+    }
+
+    public var shortTitle: String {
+        switch self {
+        case .system: "Volume"
+        case .cloud: "Cloud"
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .system: "externaldrive.connected.to.line.below"
+        case .cloud: "icloud"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .system: "Mounted with macOS's built-in SMB client, like Finder's Connect to Server."
+        case .cloud: "Appears under Locations like iCloud Drive. Files download on demand through Berth's own high-performance SMB client; changes upload in the background."
+        }
+    }
+}
+
+public struct CloudOptions: Codable, Hashable, Sendable {
+    /// Refuse to talk to the server unless every message is signed.
+    public var requireSigning: Bool = false
+    /// Encrypt all traffic (SMB 3.1.1 AES-GCM), even when the server doesn't ask for it.
+    public var requireEncryption: Bool = false
+
+    public init(requireSigning: Bool = false, requireEncryption: Bool = false) {
+        self.requireSigning = requireSigning
+        self.requireEncryption = requireEncryption
+    }
+
+    enum CodingKeys: String, CodingKey { case requireSigning, requireEncryption }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        requireSigning = try c.value(.requireSigning, default: false)
+        requireEncryption = try c.value(.requireEncryption, default: false)
     }
 }
 

@@ -90,10 +90,16 @@ struct SpeedTestSheet: View {
         error = nil
         phase = .writing(0)
         let config = SpeedTest.Configuration(fileSizeMB: size)
+        // Cloud shares are measured over BerthSMB itself: writes into the cloud folder would
+        // only measure the local disk, since uploads happen in the background.
+        let cloudClient = model.runtime(shareID).mountedBackend == .cloud ? CloudVolumes.shared.client(shareID) : nil
         task = Task {
             do {
-                let r = try await SpeedTest.run(mountPoint: path, configuration: config) { p in
-                    Task { @MainActor in phase = p }
+                let report: @Sendable (SpeedTest.Phase) -> Void = { p in Task { @MainActor in phase = p } }
+                let r = if let cloudClient {
+                    try await SpeedTest.run(client: cloudClient, configuration: config, progress: report)
+                } else {
+                    try await SpeedTest.run(mountPoint: path, configuration: config, progress: report)
                 }
                 result = r
                 model.speedTestResults[shareID] = r

@@ -65,6 +65,8 @@ enum FinderIntegration {
     // MARK: Post-mount / pre-unmount
 
     static func didMount(_ share: Share, at path: String) async {
+        // Cloud locations are already in the sidebar (Locations), and have no volume icon.
+        guard share.backend == .system else { return }
         if share.pinToSidebar {
             let ok = await Task.detached { SharedFileList.pinToSidebar(path: path, name: share.name) }.value
             if !ok { AppModel.shared.log.add(.warning, "Could not pin to the Finder sidebar", share: share) }
@@ -75,6 +77,7 @@ enum FinderIntegration {
     }
 
     static func willUnmount(_ share: Share, at path: String) {
+        guard share.backend == .system else { return }
         // A sidebar item pointing at an unmounted volume turns into a dead entry; remove it and
         // add it back on the next mount.
         if share.pinToSidebar { SharedFileList.unpinFromSidebar(path: path) }

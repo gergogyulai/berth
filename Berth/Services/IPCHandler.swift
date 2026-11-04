@@ -122,7 +122,7 @@ enum IPCHandler {
         return IPC.ShareInfo(
             id: share.id, name: share.name, slug: share.slug, group: model.group(for: share)?.name, url: url,
             state: rt.state.code, stateTitle: rt.state.title, mountPoint: rt.mountPoint, address: rt.activeAddress,
-            latencyMs: rt.lastProbeLatency?.inMilliseconds, error: rt.lastError
+            latencyMs: rt.lastProbeLatency?.inMilliseconds, error: rt.lastError, backend: share.backend.rawValue
         )
     }
 }

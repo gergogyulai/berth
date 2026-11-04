@@ -103,7 +103,10 @@ final class AppModel {
             Keychain.deletePassword(for: share.id)
         }
         store.upsert(share)
-        if let preset = share.options.preset { try? NSMBConfEditor.apply(preset, toHost: share.primaryHost) }
+        // nsmb.conf only affects macOS's own client; cloud shares turn the preset into BerthSMB tuning.
+        if share.backend == .system, let preset = share.options.preset {
+            try? NSMBConfEditor.apply(preset, toHost: share.primaryHost)
+        }
         coordinator.shareDidChange(share.id)
         log.add(.info, isNew ? "Share added" : "Share updated", share: share)
     }

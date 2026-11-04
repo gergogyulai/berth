@@ -17,6 +17,7 @@ struct ShareInspector: View {
                     }
                     detailsSection(share, rt)
                     if rt.state.isMounted { mountSection(rt) }
+                    if rt.state.isMounted, rt.mountedBackend == .cloud { cloudSection() }
                     if let result = model.speedTestResults[shareID], rt.state.isMounted { speedSection(result) }
                     behaviorSection(share)
                 }
@@ -108,6 +109,24 @@ struct ShareInspector: View {
             }
             row("Share", share.shareName)
             row("User", accountText(share))
+            LabeledContent("Backend") {
+                Label(share.backend.title, systemImage: share.backend.symbol)
+            }
+        }
+    }
+
+    /// What Berth's own SMB client negotiated for a cloud share.
+    private func cloudSection() -> some View {
+        Section("Berth SMB") {
+            if let info = CloudVolumes.shared.connectionInfo(shareID) {
+                row("Protocol", "SMB \(info.dialect)")
+                row("Security", info.encryption.map { "Encrypted (\($0))" }
+                    ?? info.signing.map { "Signed (\($0))" } ?? String(localized: "Not signed"))
+                row("I/O", "\(info.ioSize / 1024) KiB × \(info.supportsMultiCredit ? "pipelined" : "sequential")")
+                if info.isGuest { row("Session", String(localized: "Guest")) }
+            } else {
+                row("Protocol", String(localized: "Reconnecting…"))
+            }
         }
     }
 

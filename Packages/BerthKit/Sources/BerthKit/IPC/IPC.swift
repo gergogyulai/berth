@@ -39,9 +39,11 @@ public enum IPC {
         public var address: String?
         public var latencyMs: Double?
         public var error: String?
+        /// "system" or "cloud" (absent from older versions of Berth).
+        public var backend: String?
 
         public init(id: UUID, name: String, slug: String, group: String?, url: String, state: String, stateTitle: String,
-                    mountPoint: String?, address: String?, latencyMs: Double?, error: String?) {
+                    mountPoint: String?, address: String?, latencyMs: Double?, error: String?, backend: String? = nil) {
             self.id = id
             self.name = name
             self.slug = slug
@@ -53,6 +55,7 @@ public enum IPC {
             self.address = address
             self.latencyMs = latencyMs
             self.error = error
+            self.backend = backend
         }
     }
 

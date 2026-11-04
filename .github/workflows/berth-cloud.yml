@@ -1,0 +1,88 @@
+# Builds and tests the Berth Cloud work: the BerthSMB client, BerthKit, the app with its File
+# Provider extension, and BerthSMB against a real Samba server.
+name: Berth Cloud
+
+on:
+  push:
+    paths:
+      - "Packages/**"
+      - "Berth/**"
+      - "BerthCloud/**"
+      - "BerthCLI/**"
+      - "Config/**"
+      - "Berth.xcodeproj/**"
+      - ".github/workflows/berth-cloud.yml"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: BerthSMB unit tests
+        working-directory: Packages/BerthSMB
+        run: swift test
+
+      - name: BerthKit unit tests
+        working-directory: Packages/BerthKit
+        run: swift test
+
+      - name: Build app and extension
+        run: |
+          xcodebuild -project Berth.xcodeproj -scheme Berth -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/dd" CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" build
+          APP="$RUNNER_TEMP/dd/Build/Products/Debug/Berth.app"
+          test -d "$APP/Contents/PlugIns/BerthCloud.appex"
+          codesign -d --entitlements - "$APP/Contents/PlugIns/BerthCloud.appex"
+
+  samba:
+    # BerthSMB is portable; on Linux it runs its integration tests against a local Samba.
+    runs-on: ubuntu-24.04
+    container: swift:6.2-noble
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Start Samba
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq samba smbclient > /dev/null
+          mkdir -p /srv/smb/plain /srv/smb/enc /run/samba && chmod 777 /srv/smb/plain /srv/smb/enc
+          cat > /etc/samba/smb.conf <<'EOF'
+          [global]
+            server role = standalone server
+            map to guest = Bad User
+            server signing = mandatory
+            smb ports = 4450
+            disable netbios = yes
+            load printers = no
+          [plain]
+            path = /srv/smb/plain
+            read only = no
+            guest ok = yes
+          [enc]
+            path = /srv/smb/enc
+            read only = no
+            smb encrypt = required
+          EOF
+          useradd -M berth
+          (echo 'p@ss w0rd'; echo 'p@ss w0rd') | smbpasswd -s -a berth
+          smbd -D
+          sleep 2
+          smbclient -p 4450 //127.0.0.1/plain -U 'berth%p@ss w0rd' -c ls
+
+      - name: BerthSMB tests against Samba
+        working-directory: Packages/BerthSMB
+        env:
+          BERTH_SMB_TEST_URL: "smb://berth:p%40ss%20w0rd@127.0.0.1:4450/plain"
+          BERTH_SMB_TEST_ENCRYPTED_URL: "smb://berth:p%40ss%20w0rd@127.0.0.1:4450/enc"
+        run: swift test
+
+      - name: Benchmark (loopback)
+        working-directory: Packages/BerthSMB
+        env:
+          SMB_PASSWORD: "p@ss w0rd"
+        run: |
+          swift run -c release berth-smb info smb://berth@127.0.0.1:4450/plain
+          swift run -c release berth-smb bench smb://berth@127.0.0.1:4450/plain --size 256
