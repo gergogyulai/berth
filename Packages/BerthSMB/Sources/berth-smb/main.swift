@@ -140,9 +140,9 @@ func bench() async throws {
         try? FileManager.default.removeItem(at: back)
     }
     let block = Data((0..<(1 << 20)).map { UInt8(truncatingIfNeeded: $0 &* 2_654_435_761 >> 13) })
-    FileManager.default.createFile(atPath: local.path, contents: nil)
+    guard FileManager.default.createFile(atPath: local.path, contents: nil) else { fail("Could not create \(local.path)") }
     let handle = try FileHandle(forWritingTo: local)
-    for _ in 0..<sizeMB { handle.write(block) }
+    for _ in 0..<sizeMB { try handle.write(contentsOf: block) }
     try handle.close()
     let bytes = Int64(sizeMB) << 20
 

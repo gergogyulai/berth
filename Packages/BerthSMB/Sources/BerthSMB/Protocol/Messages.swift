@@ -511,6 +511,18 @@ struct SMBFileStat: Sendable, Equatable {
         endOfFile = try r.u64(o + 40)
         attributes = SMBFileAttributes(rawValue: try r.u32(o + 48))
     }
+
+    /// FILE_*_DIRECTORY_INFORMATION entries put EndOfFile *before* AllocationSize, the reverse
+    /// of CREATE and CLOSE responses.
+    init(directoryEntry r: ByteReader, at o: Int) throws {
+        creationTime = try r.u64(o)
+        lastAccessTime = try r.u64(o + 8)
+        lastWriteTime = try r.u64(o + 16)
+        changeTime = try r.u64(o + 24)
+        endOfFile = try r.u64(o + 32)
+        allocationSize = try r.u64(o + 40)
+        attributes = SMBFileAttributes(rawValue: try r.u32(o + 48))
+    }
 }
 
 struct CreateResponse {
@@ -578,7 +590,7 @@ enum DirectoryParser {
         var position = 0
         while true {
             let next = Int(try r.u32(position))
-            let stat = try SMBFileStat(r, at: position + 8)
+            let stat = try SMBFileStat(directoryEntry: r, at: position + 8)
             let nameLength = Int(try r.u32(position + 60))
             let fileID = try r.u64(position + 72)
             let name = try r.utf16(position + 80, byteCount: nameLength)

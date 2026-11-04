@@ -16,19 +16,26 @@ on:
   workflow_dispatch:
 
 jobs:
-  macos:
+  smb-tests:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
-
       - name: BerthSMB unit tests
         working-directory: Packages/BerthSMB
         run: swift test
 
+  kit-tests:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
       - name: BerthKit unit tests
         working-directory: Packages/BerthKit
         run: swift test
 
+  app:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
       - name: Build app and extension
         run: |
           xcodebuild -project Berth.xcodeproj -scheme Berth -configuration Debug \
