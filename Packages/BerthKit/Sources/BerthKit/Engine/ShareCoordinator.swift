@@ -38,10 +38,16 @@ public final class ShareCoordinator {
     @ObservationIgnored public var postMountHook: ((Share, String) async -> Void)?
     /// Runs before an unmount Berth initiates (e.g. to unpin from the sidebar).
     @ObservationIgnored public var preUnmountHook: ((Share, String) -> Void)?
+    /// Runs when a mount goes away without Berth unmounting it (sleep, network loss, Finder eject).
+    @ObservationIgnored public var mountLostHook: ((Share) -> Void)?
 
     @ObservationIgnored private var healthTask: Task<Void, Never>?
     @ObservationIgnored private var diskSubscription: UUID?
     @ObservationIgnored private let power = PowerObserver()
+    @ObservationIgnored private let mountGate = MountGate()
+    @ObservationIgnored private var serviceRestarts = RestartBudget()
+    /// Extra mounts Berth has already tried to remove, so one that's in use isn't retried on every check.
+    @ObservationIgnored private var handledDuplicates: Set<String> = []
     @ObservationIgnored private let logger = Logger(subsystem: "app.berth", category: "coordinator")
 
     private enum ConnectReason: String {
@@ -408,6 +414,19 @@ public final class ShareCoordinator {
             return
         }
 
+        // One mount at a time: see MountGate. The wait can be long, so check again once it's our turn.
+        guard await mountGate.acquire() else { return finishCancelled(rt) }
+        defer { mountGate.release() }
+        guard rt.wantsMounted else { return finishCancelled(rt) }
+        if isSleeping {
+            rt.state = .paused(.sleeping)
+            return
+        }
+        if let entry = MountTable.find(share, knownMountPoint: rt.mountPoint, in: MountTable.smbMounts()) {
+            adopt(entry, for: share, announce: reason == .user)
+            return
+        }
+
         log.add(.debug, "Mounting \(url.absoluteString) (\(reason.rawValue))", share: share)
         let request = MountRequest(
             url: url,
@@ -420,7 +439,9 @@ public final class ShareCoordinator {
         )
 
         do {
-            let path = try await Mounter.mount(request)
+            let path = try await Mounter.mount(request, recoverStall: { [weak self] in
+                await self?.restartMountService(for: share) ?? false
+            })
             guard rt.wantsMounted else {
                 // The user changed their mind while we were connecting.
                 rt.mountPoint = path
@@ -431,6 +452,17 @@ public final class ShareCoordinator {
         } catch {
             handleMountError(error, share: share)
         }
+    }
+
+    /// A mount has outlived its timeout even though the server answered our probe.
+    private func restartMountService(for share: Share) async -> Bool {
+        guard prefs.restartStuckMountService else { return false }
+        guard serviceRestarts.consume() else {
+            log.add(.warning, "macOS's mount service keeps getting stuck. Not restarting it again for now.", share: share)
+            return false
+        }
+        log.add(.warning, "macOS's mount service isn't responding. Restarting it.", share: share)
+        return await MountService.restart()
     }
 
     private func finishCancelled(_ rt: ShareRuntime) {
@@ -473,6 +505,10 @@ public final class ShareCoordinator {
             onEvent?(.authFailed(share, message: error.message))
         case .hostUnreachable, .timedOut:
             rt.state = .hostUnreachable
+            if rt.attempt == 0 { log.add(.warning, error.message, share: share) }
+            scheduleRetry(share.id)
+        case .stalled:
+            rt.state = .failed
             if rt.attempt == 0 { log.add(.warning, error.message, share: share) }
             scheduleRetry(share.id)
         case .cancelled:
@@ -633,6 +669,30 @@ public final class ShareCoordinator {
                 adopt(entry, for: share, announce: false)
             }
         }
+        removeDuplicateMounts(in: entries)
+    }
+
+    /// Unmounts extra copies of shares that are already mounted. Never forced and tried once per
+    /// copy, so one that's in use stays until the user removes it.
+    private func removeDuplicateMounts(in entries: [MountTable.Entry]) {
+        handledDuplicates.formIntersection(entries.map(\.mountPoint))
+        let tracked = Set(runtimes.values.compactMap(\.mountPoint))
+        for share in store.config.shares {
+            let rt = runtime(for: share.id)
+            guard rt.state == .mounted, rt.operation == nil,
+                  let kept = rt.mountPoint, entries.contains(where: { $0.mountPoint == kept }) else { continue }
+            for entry in MountTable.duplicates(of: share, in: entries, excluding: tracked)
+            where handledDuplicates.insert(entry.mountPoint).inserted {
+                Task {
+                    do {
+                        try await DiskWatcher.shared.unmount(path: entry.mountPoint, timeout: .seconds(15), fallbackToForce: false)
+                        log.add(.info, "Removed duplicate mount at \(entry.mountPoint)", share: share)
+                    } catch {
+                        log.add(.warning, "Left duplicate mount at \(entry.mountPoint): \(error.localizedDescription)", share: share)
+                    }
+                }
+            }
+        }
     }
 
     private func probe(_ share: Share) {
@@ -697,6 +757,7 @@ public final class ShareCoordinator {
         rt.mountPoint = nil
         rt.connectedSince = nil
         rt.staleSince = nil
+        mountLostHook?(share)
         let ejected = rt.ejectRequestedAt.map { Date().timeIntervalSince($0) < 60 } ?? false
         rt.ejectRequestedAt = nil
         if ejected {

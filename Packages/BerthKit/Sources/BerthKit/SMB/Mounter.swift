@@ -8,6 +8,8 @@ public struct MountError: LocalizedError, Sendable, Equatable {
         case hostUnreachable
         case shareNotFound
         case timedOut
+        /// The mount never finished even though the server answered, which points at the macOS helper.
+        case stalled
         case cancelled
         case alreadyMounted
         case mountPointUnavailable
@@ -26,6 +28,10 @@ public struct MountError: LocalizedError, Sendable, Equatable {
     }
 
     public var errorDescription: String? { message }
+
+    static let stalled = MountError(
+        kind: .stalled, code: ETIMEDOUT,
+        message: "The server answered, but macOS's mount service didn't finish the mount.")
 
     /// Maps NetFS return values (errno when positive, OSStatus when negative).
     public static func from(status: Int32) -> MountError {
@@ -86,7 +92,12 @@ public enum Mounter {
     private static let queue = DispatchQueue(label: "app.berth.netfs", qos: .userInitiated)
 
     /// Mounts and returns the mount point.
-    public static func mount(_ request: MountRequest) async throws(MountError) -> String {
+    ///
+    /// If `recoverStall` is given, it runs when the timeout passes and can restart the mount helper.
+    /// When it returns true the mount gets one more timeout. Pending requests are replayed against
+    /// the new helper, so this one is left to finish rather than being cancelled and sent again.
+    public static func mount(_ request: MountRequest,
+                             recoverStall: (@Sendable () async -> Bool)? = nil) async throws(MountError) -> String {
         if let custom = request.mountPoint {
             try prepareMountPoint(custom)
         }
@@ -109,10 +120,32 @@ public enum Mounter {
         let user = request.username
         let password = request.password
 
-        final class RequestHolder: @unchecked Sendable { var id: AsyncRequestID? }
+        final class RequestHolder: @unchecked Sendable {
+            // Only touched on `queue`.
+            var serviceRestarted = false
+        }
         let holder = RequestHolder()
         let dictionaries = UncheckedSendable((openOptions, mountOptions))
         let box = OnceBox<Result<String, MountError>>()
+
+        let watchdog = Task.detached {
+            try? await Task.sleep(for: request.timeout)
+            guard !Task.isCancelled else { return }
+            if let recoverStall {
+                queue.sync { holder.serviceRestarted = true }
+                if await recoverStall() {
+                    try? await Task.sleep(for: request.timeout)
+                    guard !Task.isCancelled else { return }
+                } else {
+                    queue.sync { holder.serviceRestarted = false }
+                }
+            }
+            // Deliberately no NetFSMountURLCancel: it does nothing for a stuck helper and has crashed
+            // the app inside NetAuth (NAConnectToServerCancel). If this request finishes after all,
+            // the coordinator's health check adopts the mount or removes it as a duplicate.
+            box.fire(.failure(.stalled))
+        }
+        defer { watchdog.cancel() }
 
         let result: Result<String, MountError> = await withCheckedContinuation { continuation in
             box.setHandler { continuation.resume(returning: $0) }
@@ -136,15 +169,13 @@ public enum Mounter {
                             box.fire(.failure(MountError(kind: .other, message: "The server returned no mount point.")))
                         }
                     } else {
-                        box.fire(.failure(MountError.from(status: status)))
+                        let error = MountError.from(status: status)
+                        // A request cut off by the restart says nothing about the share itself.
+                        let interrupted = holder.serviceRestarted && (error.kind == .cancelled || error.kind == .other)
+                        box.fire(.failure(interrupted ? .stalled : error))
                     }
                 }
-                holder.id = requestID
                 if status != 0 { box.fire(.failure(MountError.from(status: status))) }
-            }
-            queue.asyncAfter(deadline: .now() + request.timeout.timeInterval) {
-                if let id = holder.id { _ = NetFSMountURLCancel(id) }
-                box.fire(.failure(MountError(kind: .timedOut, code: ETIMEDOUT, message: "The mount timed out.")))
             }
         }
         return try result.get()

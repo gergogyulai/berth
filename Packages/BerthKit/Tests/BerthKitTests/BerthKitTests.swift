@@ -132,3 +132,106 @@ import Testing
         #expect(SharedFileList.extractURLs(from: data, scheme: "smb://") == ["smb://me@1.2.3.4/data"])
     }
 }
+
+@MainActor @Suite struct MountGateTests {
+    @Test func runsOneAtATimeInOrder() async {
+        let gate = MountGate()
+        var order: [Int] = []
+        #expect(await gate.acquire())
+        let second = Task { @MainActor in
+            #expect(await gate.acquire())
+            order.append(2)
+            gate.release()
+        }
+        let third = Task { @MainActor in
+            await Task.yield()
+            #expect(await gate.acquire())
+            order.append(3)
+            gate.release()
+        }
+        for _ in 0..<5 { await Task.yield() }
+        #expect(order.isEmpty)
+        gate.release()
+        await second.value
+        await third.value
+        #expect(order == [2, 3])
+    }
+
+    @Test func cancelledWaiterGivesUpItsPlace() async {
+        let gate = MountGate()
+        #expect(await gate.acquire())
+        let waiter = Task { @MainActor in await gate.acquire() }
+        for _ in 0..<5 { await Task.yield() }
+        waiter.cancel()
+        #expect(await waiter.value == false)
+        gate.release()
+        // Still free: the cancelled waiter must not have been handed the gate.
+        #expect(await gate.acquire())
+    }
+}
+
+@Suite struct RestartBudgetTests {
+    @Test func limitsRestartsWithinTheWindow() {
+        var budget = RestartBudget(limit: 2, window: 100)
+        let start = Date()
+        let results = [0, 1, 2, 100].map { budget.consume(now: start.addingTimeInterval($0)) }
+        #expect(results == [true, true, false, true])
+    }
+}
+
+@Suite struct MountTableThreadingTests {
+    @Test func canBeReadFromManyThreadsAtOnce() {
+        DispatchQueue.concurrentPerform(iterations: 2_000) { _ in
+            _ = MountTable.smbMounts()
+        }
+    }
+}
+
+@Suite struct DuplicateMountTests {
+    let share = Share(addresses: [ServerAddress(host: "192.168.1.54"), ServerAddress(host: "nas.tail.ts.net")],
+                      shareName: "files", auth: .registered, username: "gergo")
+
+    func entry(_ point: String, host: String = "192.168.1.54", share: String = "files", user: String = "gergo") -> MountTable.Entry {
+        MountTable.Entry(mountPoint: point, source: "", host: host, share: share, username: user, ownerUID: getuid())
+    }
+
+    @Test func findsUntrackedCopiesOnAnyAddress() {
+        let entries = [entry("/Volumes/files"), entry("/Volumes/files-1"), entry("/Volumes/files-2", host: "nas.tail.ts.net")]
+        let found = MountTable.duplicates(of: share, in: entries, excluding: ["/Volumes/files"]).map(\.mountPoint)
+        #expect(found == ["/Volumes/files-1", "/Volumes/files-2"])
+    }
+
+    @Test func leavesOtherSharesServersAndUsersAlone() {
+        let entries = [entry("/Volumes/other", share: "other"), entry("/Volumes/x", host: "10.0.0.1"), entry("/Volumes/guest", user: "GUEST")]
+        #expect(MountTable.duplicates(of: share, in: entries, excluding: []).isEmpty)
+    }
+
+    @Test func ignoresSharesWithoutAnAccount() {
+        var guest = share
+        guest.auth = .guest
+        #expect(MountTable.duplicates(of: guest, in: [entry("/Volumes/files")], excluding: []).isEmpty)
+    }
+}
+
+@Suite struct DeadPinTests {
+    var shares: [Share] { [Share(addresses: [ServerAddress(host: "192.168.1.54")], shareName: "files")] }
+    let url = "smb://gergo@192.168.1.54/files"
+
+    @Test func matchesUnmountedVolumesOfOurShares() {
+        #expect(SharedFileList.isDeadPin(path: "/Volumes/files", urls: [url], shares: shares, mounted: []))
+    }
+
+    @Test func keepsEverythingElse() {
+        #expect(!SharedFileList.isDeadPin(path: "/Volumes/files", urls: [url], shares: shares, mounted: ["/Volumes/files"]))
+        #expect(!SharedFileList.isDeadPin(path: "/Volumes/USB DISK", urls: [], shares: shares, mounted: []))
+        #expect(!SharedFileList.isDeadPin(path: "/Volumes/media", urls: ["smb://gergo@192.168.1.54/media"], shares: shares, mounted: []))
+        #expect(!SharedFileList.isDeadPin(path: "/Users/gergo/files", urls: [url], shares: shares, mounted: []))
+    }
+}
+
+@Suite struct StuckMountPreferenceTests {
+    @Test func defaultsToOnForExistingConfigs() throws {
+        let prefs = try JSONDecoder().decode(Preferences.self, from: Data("{}".utf8))
+        #expect(prefs.restartStuckMountService)
+    }
+}
