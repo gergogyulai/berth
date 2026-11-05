@@ -87,6 +87,33 @@ public enum SharedFileList {
         return removed
     }
 
+    /// Removes pins for these shares whose volume is no longer mounted. Opening such an item makes
+    /// Finder mount the share itself, outside Berth and without the share's options. Reads the
+    /// bookmarks without resolving them, because resolving could trigger that same mount.
+    @discardableResult
+    public static func removeDeadPins(for shares: [Share], mounted: Set<String>) -> Int {
+        guard let s = symbols, let (list, items) = items(of: favoriteItems) else { return 0 }
+        var removed = 0
+        for item in items {
+            guard let data = s.bookmark?(item, quietFlags, nil)?.takeRetainedValue() as Data?,
+                  let path = URL.resourceValues(forKeys: [.pathKey], fromBookmarkData: data)?.path,
+                  isDeadPin(path: path, urls: extractURLs(from: data, scheme: "smb://"), shares: shares, mounted: mounted),
+                  s.remove(list, item) == noErr else { continue }
+            removed += 1
+        }
+        return removed
+    }
+
+    static func isDeadPin(path: String, urls: [String], shares: [Share], mounted: Set<String>) -> Bool {
+        guard path.hasPrefix("/Volumes/"), !mounted.contains(path) else { return false }
+        return urls.compactMap(SMBURL.parse).contains { parsed in
+            shares.contains { share in
+                share.shareName.caseInsensitiveCompare(parsed.share) == .orderedSame
+                    && share.addresses.contains { SMBURL.hostsMatch($0.trimmedHost, parsed.host) }
+            }
+        }
+    }
+
     // MARK: Servers
 
     public struct ServerEntry: Hashable, Sendable {

@@ -58,8 +58,15 @@ final class AppModel {
         if let error = store.lastError { log.add(.error, error) }
 
         coordinator.onEvent = { [weak self] event in self?.notifications.handle(event, preferences: self?.config.preferences ?? Preferences()) }
-        coordinator.postMountHook = { share, path in await FinderIntegration.didMount(share, at: path) }
+        coordinator.postMountHook = { share, path in
+            await FinderIntegration.removeDeadPins(for: [share])
+            await FinderIntegration.didMount(share, at: path)
+        }
         coordinator.preUnmountHook = { share, path in FinderIntegration.willUnmount(share, at: path) }
+        coordinator.mountLostHook = { share in Task { await FinderIntegration.removeDeadPins(for: [share]) } }
+        // Pins can also survive a reboot or crash, when none of the hooks get to run.
+        let shares = config.shares
+        Task { await FinderIntegration.removeDeadPins(for: shares) }
         coordinator.start()
 
         notifications.setUp()

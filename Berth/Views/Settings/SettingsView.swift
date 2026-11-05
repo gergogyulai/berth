@@ -188,6 +188,10 @@ private struct NetworkSettings: View {
                     Text("Wait for Tailscale instead of retrying")
                     Text("Tailscale-only shares mount the moment the tunnel comes up.")
                 }
+                Toggle(isOn: pref(model, \.restartStuckMountService)) {
+                    Text("Restart macOS's mount service when it gets stuck")
+                    Text("Used when a mount hangs even though the server answers. A mount another app is making at that moment starts over.")
+                }
             } header: {
                 Text("Automatic Mounting")
             } footer: {

@@ -71,6 +71,8 @@ public struct Preferences: Codable, Equatable, Sendable {
     public var pauseOnExpensiveNetworks: Bool = true
     public var pauseOnConstrainedNetworks: Bool = true
     public var waitForTailscale: Bool = true
+    /// Restart macOS's mount helper when a mount hangs even though the server answers.
+    public var restartStuckMountService: Bool = true
 
     // Notifications
     public var notifyOnConnect: Bool = false
@@ -87,7 +89,7 @@ public struct Preferences: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case autoMountEnabled, probeInterval, probeTimeout, mountTimeout, maxRetryDelay, forceUnmountStale
         case staleGracePeriod, unmountBeforeSleep, remountAfterWake, pauseOnExpensiveNetworks
-        case pauseOnConstrainedNetworks, waitForTailscale, notifyOnConnect, notifyOnDisconnect
+        case pauseOnConstrainedNetworks, waitForTailscale, restartStuckMountService, notifyOnConnect, notifyOnDisconnect
         case notifyOnAuthFailure, notifyOnStale, mountAllHotKey, unmountAllHotKey
     }
 
@@ -106,6 +108,7 @@ public struct Preferences: Codable, Equatable, Sendable {
         pauseOnExpensiveNetworks = try c.value(.pauseOnExpensiveNetworks, default: d.pauseOnExpensiveNetworks)
         pauseOnConstrainedNetworks = try c.value(.pauseOnConstrainedNetworks, default: d.pauseOnConstrainedNetworks)
         waitForTailscale = try c.value(.waitForTailscale, default: d.waitForTailscale)
+        restartStuckMountService = try c.value(.restartStuckMountService, default: d.restartStuckMountService)
         notifyOnConnect = try c.value(.notifyOnConnect, default: d.notifyOnConnect)
         notifyOnDisconnect = try c.value(.notifyOnDisconnect, default: d.notifyOnDisconnect)
         notifyOnAuthFailure = try c.value(.notifyOnAuthFailure, default: d.notifyOnAuthFailure)

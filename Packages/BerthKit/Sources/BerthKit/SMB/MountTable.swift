@@ -15,8 +15,11 @@ public enum MountTable {
 
     /// Lists smbfs mounts. Uses MNT_NOWAIT so a dead server can never block the caller.
     public static func smbMounts(includeOtherUsers: Bool = false) -> [Entry] {
+        // The _r_np variant: plain getmntinfo reuses one static buffer and crashes when called from
+        // two threads at once.
         var buffer: UnsafeMutablePointer<statfs>?
-        let count = getmntinfo(&buffer, MNT_NOWAIT)
+        let count = getmntinfo_r_np(&buffer, MNT_NOWAIT)
+        defer { free(buffer) }
         guard count > 0, let buffer else { return [] }
         var entries: [Entry] = []
         for i in 0..<Int(count) {
@@ -39,6 +42,18 @@ public enum MountTable {
             ))
         }
         return entries
+    }
+
+    /// Extra mounts of a share that nothing in Berth tracks, such as ones Finder or a replayed request
+    /// made. Only same-user matches count: a second mount under another account can be deliberate.
+    public static func duplicates(of share: Share, in entries: [Entry], excluding tracked: Set<String>) -> [Entry] {
+        guard share.auth == .registered else { return [] }
+        return entries.filter { entry in
+            !tracked.contains(entry.mountPoint)
+                && entry.share.caseInsensitiveCompare(share.shareName) == .orderedSame
+                && entry.username.caseInsensitiveCompare(share.username) == .orderedSame
+                && share.addresses.contains { SMBURL.hostsMatch($0.trimmedHost, entry.host) }
+        }
     }
 
     /// Finds the mount for a share, preferring its known mount point, then any matching host/share.

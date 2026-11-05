@@ -80,6 +80,18 @@ enum FinderIntegration {
         if share.pinToSidebar { SharedFileList.unpinFromSidebar(path: path) }
     }
 
+    /// Removes sidebar pins left behind by mounts that went away without a normal unmount, or that
+    /// came back at another path.
+    static func removeDeadPins(for shares: [Share]) async {
+        let pinned = shares.filter(\.pinToSidebar)
+        guard !pinned.isEmpty else { return }
+        let removed = await Task.detached {
+            let mounted = Set(MountTable.smbMounts().map(\.mountPoint))
+            return SharedFileList.removeDeadPins(for: pinned, mounted: mounted)
+        }.value
+        if removed > 0 { AppModel.shared.log.add(.info, "Removed \(removed) dead Finder sidebar item(s)") }
+    }
+
     /// Writes .VolumeIcon.icns to the share root. Best-effort: needs write access, and some
     /// servers ignore the Finder info flag.
     static func applyVolumeIcon(_ share: Share, at path: String) async {

@@ -83,11 +83,14 @@ public final class DiskWatcher: @unchecked Sendable {
 
     /// Asks DiskArbitration to unmount the volume. This lets other apps object ("in use by…") and
     /// keeps Finder in the loop.
-    public func unmount(path: String, force: Bool = false, timeout: Duration = .seconds(20)) async throws(UnmountError) {
+    /// `fallbackToForce: false` is for mounts that may be in use and aren't worth interrupting.
+    public func unmount(path: String, force: Bool = false, timeout: Duration = .seconds(20),
+                        fallbackToForce: Bool = true) async throws(UnmountError) {
         guard let session else { throw UnmountError(message: "DiskArbitration is unavailable.", isBusy: false) }
         let url = URL(fileURLWithPath: path) as CFURL
         guard let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url) else {
             // Not known to DA (already gone, or never registered) — fall back to the syscall.
+            guard fallbackToForce else { throw UnmountError(message: "DiskArbitration doesn't know this volume.", isBusy: false) }
             try await Self.forceUnmount(path: path, timeout: timeout)
             return
         }
