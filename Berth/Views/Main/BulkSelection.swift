@@ -179,7 +179,8 @@ struct InspectorButtonRow<Content: View>: View {
     }
 }
 
-/// The "…" button. A text label because an image-only menu comes out shorter than its neighbours.
+/// The "…" button. Plain text because the alternatives break depending on the SDK: an image-only menu
+/// comes out shorter than its neighbours, and with the 26.5 SDK `Text(Image(…))` draws nothing at all.
 struct InspectorMoreMenu<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -187,7 +188,7 @@ struct InspectorMoreMenu<Content: View>: View {
         Menu {
             content
         } label: {
-            Text(Image(systemName: "ellipsis")).frame(maxWidth: .infinity)
+            Text(verbatim: "⋯").frame(maxWidth: .infinity)
         }
         .menuStyle(.button)
         .buttonStyle(.bordered)
