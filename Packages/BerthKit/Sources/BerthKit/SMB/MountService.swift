@@ -29,14 +29,9 @@ public enum MountService {
 
 /// Limits helper restarts, so a server that never answers can't turn into a restart loop.
 struct RestartBudget {
-    let limit: Int
-    let window: TimeInterval
+    var limit = 3
+    var window: TimeInterval = 30 * 60
     private var history: [Date] = []
-
-    init(limit: Int = 3, window: TimeInterval = 30 * 60) {
-        self.limit = limit
-        self.window = window
-    }
 
     /// Spends one restart if any are left in the current window.
     mutating func consume(now: Date = Date()) -> Bool {
