@@ -566,8 +566,10 @@ public final class ShareCoordinator {
         let wasMounted = rt.state == .mounted && rt.mountPoint == entry.mountPoint
         rt.state = .mounted
         rt.mountPoint = entry.mountPoint
-        rt.activeAddress = entry.host
-        rt.activeAddressKind = AddressClassifier.classify(entry.host)
+        // Prefer the configured address: it knows the port and any kind the user set by hand.
+        let address = share.address(matchingHost: entry.host)
+        rt.activeAddress = address?.display ?? entry.host
+        rt.activeAddressKind = address?.resolvedKind ?? AddressClassifier.classify(entry.host)
         rt.wantsMounted = true
         rt.attempt = 0
         rt.lastError = nil

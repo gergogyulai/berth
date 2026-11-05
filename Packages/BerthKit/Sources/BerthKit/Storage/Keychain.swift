@@ -43,13 +43,8 @@ public enum Keychain {
 
     /// Saves (or replaces) the password. `label` is what Keychain Access shows.
     public static func setPassword(_ password: String, for shareID: UUID, label: String, server: String, username: String) throws {
-        let data = Data(password.utf8)
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrLabel as String: "Berth: \(label)",
-            kSecAttrDescription as String: "SMB share password",
-            kSecAttrComment as String: "\(username)@\(server)",
-        ]
+        var attributes = details(label: label, server: server, username: username)
+        attributes[kSecValueData as String] = Data(password.utf8)
         let status = SecItemUpdate(baseQuery(shareID) as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
             var add = baseQuery(shareID)
@@ -60,6 +55,30 @@ public enum Keychain {
         } else if status != errSecSuccess {
             throw KeychainError.status(status)
         }
+    }
+
+    /// Brings a saved password's name up to date with its share, leaving the password alone. Keychain
+    /// prompts show this name. Attributes can be read without a prompt, so an item that's already
+    /// right is never written to.
+    public static func updateDetails(for shareID: UUID, label: String, server: String, username: String) {
+        var query = baseQuery(shareID)
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let current = item as? [String: Any] else { return }
+        let wanted = details(label: label, server: server, username: username)
+        let isCurrent = wanted.allSatisfy { key, value in (current[key] as? String) == (value as? String) }
+        guard !isCurrent else { return }
+        SecItemUpdate(baseQuery(shareID) as CFDictionary, wanted as CFDictionary)
+    }
+
+    private static func details(label: String, server: String, username: String) -> [String: Any] {
+        [
+            kSecAttrLabel as String: "Berth: \(label)",
+            kSecAttrDescription as String: "SMB share password",
+            kSecAttrComment as String: "\(username)@\(server)",
+        ]
     }
 
     public static func deletePassword(for shareID: UUID) {

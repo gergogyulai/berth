@@ -18,11 +18,16 @@ enum FinderIntegration {
         NSPasteboard.general.setString(path, forType: .string)
     }
 
-    static func copyURL(_ share: Share) {
-        let url = SMBURL.make(address: share.addresses.first ?? ServerAddress(), share: share.shareName, auth: share.auth,
-                              username: share.username, domain: share.domain)
+    static func copyURL(_ share: Share) { copyURLs([share]) }
+
+    /// One SMB address per line.
+    static func copyURLs(_ shares: [Share]) {
+        let lines = shares.map { share in
+            SMBURL.make(address: share.addresses.first ?? ServerAddress(), share: share.shareName, auth: share.auth,
+                        username: share.username, domain: share.domain)?.absoluteString ?? share.locationSummary
+        }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url?.absoluteString ?? share.locationSummary, forType: .string)
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
     }
 
     // MARK: Terminal

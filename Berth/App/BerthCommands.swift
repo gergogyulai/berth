@@ -4,7 +4,7 @@ import BerthKit
 struct BerthCommands: Commands {
     let model: AppModel
     @Environment(\.openWindow) private var openWindow
-    @FocusedValue(\.selectedShareID) private var selectedShareID
+    @FocusedValue(\.selectedShareIDs) private var selectedShareIDs
 
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
@@ -35,33 +35,55 @@ struct BerthCommands: Commands {
         }
 
         CommandMenu("Share") {
-            let share = selectedShareID.flatMap { model.config.share(id: $0) }
+            let ids = selectedShareIDs ?? []
+            // `share` is set only for a single selection; several go through `batch`.
+            let share = ids.count == 1 ? ids.first.flatMap { model.config.share(id: $0) } : nil
             let rt = share.map { model.runtime($0.id) }
-            Button(rt?.state.isMounted == true ? "Unmount" : "Mount") {
-                if let share { model.coordinator.toggle(share.id) }
-            }
-            .keyboardShortcut("m")
-            .disabled(share == nil)
+            let batch = ShareBatch(model: model, ids: ids)
+            let isBulk = ids.count > 1
+            let paths = isBulk ? batch.mountPoints : [rt?.mountPoint].compactMap(\.self)
 
-            Button("Reconnect") { if let share { model.coordinator.reconnect(share.id) } }
-                .keyboardShortcut("r")
+            if isBulk {
+                // A mixed selection mounts first; pressing the shortcut again then unmounts.
+                if batch.mountable.isEmpty {
+                    Button("Unmount \(ShareBatch.countTitle(batch.unmountable.count))") { batch.unmount() }
+                        .keyboardShortcut("m")
+                        .disabled(batch.unmountable.isEmpty)
+                } else {
+                    Button("Mount \(ShareBatch.countTitle(batch.mountable.count))") { batch.mount() }
+                        .keyboardShortcut("m")
+                }
+            } else {
+                Button(rt?.state.isMounted == true ? "Unmount" : "Mount") {
+                    if let share { model.coordinator.toggle(share.id) }
+                }
+                .keyboardShortcut("m")
                 .disabled(share == nil)
+            }
 
-            Button("Force Unmount") { if let share { Task { await model.coordinator.unmount(share.id, force: true) } } }
-                .keyboardShortcut("m", modifiers: [.command, .option])
-                .disabled(rt?.state.isMounted != true)
+            Button("Reconnect") {
+                if let share { model.coordinator.reconnect(share.id) } else { batch.reconnect() }
+            }
+            .keyboardShortcut("r")
+            .disabled(isBulk ? batch.mounted.isEmpty : share == nil)
+
+            Button("Force Unmount") {
+                if let share { Task { await model.coordinator.unmount(share.id, force: true) } } else { batch.forceUnmount() }
+            }
+            .keyboardShortcut("m", modifiers: [.command, .option])
+            .disabled(isBulk ? batch.stale.isEmpty : rt?.state.isMounted != true)
 
             Divider()
 
-            Button("Open in Finder") { if let path = rt?.mountPoint { FinderIntegration.open(path) } }
+            Button("Open in Finder") { paths.forEach(FinderIntegration.open) }
                 .keyboardShortcut("o")
-                .disabled(rt?.mountPoint == nil)
+                .disabled(paths.isEmpty)
             Button("Open in \(FinderIntegration.preferredTerminal.name)") { if let path = rt?.mountPoint { FinderIntegration.openInTerminal(path) } }
                 .keyboardShortcut("t", modifiers: [.command, .option])
                 .disabled(rt?.mountPoint == nil)
-            Button("Copy Path") { if let path = rt?.mountPoint { FinderIntegration.copyPath(path) } }
+            Button(isBulk ? "Copy Paths" : "Copy Path") { FinderIntegration.copyPath(paths.joined(separator: "\n")) }
                 .keyboardShortcut("c", modifiers: [.command, .option])
-                .disabled(rt?.mountPoint == nil)
+                .disabled(paths.isEmpty)
 
             Divider()
 
@@ -99,13 +121,13 @@ enum Links {
     static let issues = URL(string: "https://github.com/gergogyulai/berth/issues/new")!
 }
 
-struct SelectedShareKey: FocusedValueKey {
-    typealias Value = UUID
+struct SelectedSharesKey: FocusedValueKey {
+    typealias Value = Set<UUID>
 }
 
 extension FocusedValues {
-    var selectedShareID: UUID? {
-        get { self[SelectedShareKey.self] }
-        set { self[SelectedShareKey.self] = newValue }
+    var selectedShareIDs: Set<UUID>? {
+        get { self[SelectedSharesKey.self] }
+        set { self[SelectedSharesKey.self] = newValue }
     }
 }

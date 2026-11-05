@@ -56,6 +56,13 @@ public enum AddressKind: String, Codable, CaseIterable, Sendable {
 
     public enum Resolved: String, Sendable {
         case lan, tailscale
+
+        public var title: String {
+            switch self {
+            case .lan: "Local Network"
+            case .tailscale: "Tailscale"
+            }
+        }
     }
 
     public var title: String {

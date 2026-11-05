@@ -40,7 +40,7 @@ Open `Berth.xcodeproj` and run the **Berth** scheme, or:
 xcodebuild -project Berth.xcodeproj -scheme Berth -configuration Release build
 ```
 
-Local builds sign ad-hoc ("Sign to Run Locally"), so macOS may ask again for Keychain access after each rebuild. Release builds are signed with a self-signed certificate from `scripts/make-signing-cert.sh`, which keeps the app's identity stable across updates. It isn't a Developer ID, so Gatekeeper still treats the app as unnotarized.
+Plain Xcode builds sign ad-hoc ("Sign to Run Locally"), so macOS asks again for Keychain and network volume access after each rebuild. `scripts/run-dev.sh` avoids that by building and relaunching with the release certificate. Release builds are signed with a self-signed certificate from `scripts/make-signing-cert.sh`, which keeps the app's identity stable across updates. It isn't a Developer ID, so Gatekeeper still treats the app as unnotarized.
 
 ## Command line
 

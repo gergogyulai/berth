@@ -4,6 +4,7 @@ import BerthKit
 struct IconPicker: View {
     @Binding var icon: ShareIcon
     @State private var filter = ""
+    @FocusState private var filterFocused: Bool
 
     private let columns = Array(repeating: GridItem(.fixed(34), spacing: 8), count: 8)
 
@@ -60,6 +61,7 @@ struct IconPicker: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 130)
                     .controlSize(.small)
+                    .focused($filterFocused)
             }
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 8) {
@@ -92,6 +94,10 @@ struct IconPicker: View {
         }
         .padding(16)
         .frame(width: 360)
+        // With keyboard navigation on, macOS focuses the first control when a popover opens, which
+        // puts a ring on the first preset whichever icon is selected. Deferred because `defaultFocus`
+        // loses to that.
+        .onAppear { DispatchQueue.main.async { filterFocused = true } }
     }
 
     private var symbols: [String] {

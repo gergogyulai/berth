@@ -49,7 +49,7 @@ struct ShareInspector: View {
     }
 
     private func actionButtons(_ rt: ShareRuntime) -> some View {
-        HStack(spacing: 8) {
+        InspectorButtonRow {
             if rt.state.isMounted {
                 Button { if let p = rt.mountPoint { FinderIntegration.open(p) } } label: { Text("Open").frame(maxWidth: .infinity) }
                 Button { Task { await model.coordinator.unmount(shareID) } } label: { Text("Unmount").frame(maxWidth: .infinity) }
@@ -60,19 +60,8 @@ struct ShareInspector: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(rt.isBusy)
             }
-            Menu {
-                ShareContextMenu(shareID: shareID, actions: actions)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .frame(height: 16)
-            }
-            .menuStyle(.button)
-            .buttonStyle(.bordered)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("More")
+            InspectorMoreMenu { ShareContextMenu(shareID: shareID, actions: actions) }
         }
-        .controlSize(.large)
     }
 
     // MARK: Sections
@@ -100,14 +89,34 @@ struct ShareInspector: View {
 
     private func detailsSection(_ share: Share, _ rt: ShareRuntime) -> some View {
         Section {
-            let server = rt.state.isMounted ? (rt.activeAddress ?? share.primaryHost) : share.primaryHost
-            row("Server", server)
-            let fallbacks = share.addresses.map(\.display).filter { $0 != server }
-            if !fallbacks.isEmpty {
-                row(fallbacks.count == 1 ? "Fallback" : "Fallbacks", fallbacks.joined(separator: "\n"))
-            }
+            addressesRow(share, rt)
             row("Share", share.shareName)
             row("User", accountText(share))
+        }
+    }
+
+    /// Every address, with the one in use marked by an icon for how it's being reached.
+    private func addressesRow(_ share: Share, _ rt: ShareRuntime) -> some View {
+        let active = rt.state.isMounted ? rt.activeAddress : nil
+        return LabeledContent(share.addresses.count == 1 ? "Address" : "Addresses") {
+            VStack(alignment: .trailing, spacing: 2) {
+                ForEach(share.addresses) { address in
+                    let isActive = address.display == active
+                    let kind = address.resolvedKind
+                    HStack(spacing: 4) {
+                        if isActive {
+                            Image(systemName: kind.symbol)
+                                .accessibilityLabel("Connected via \(kind.title)")
+                        }
+                        Text(address.display)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                    .foregroundStyle(isActive ? .primary : .secondary)
+                    .help(isActive ? "Connected via \(kind.title)" : "")
+                }
+            }
         }
     }
 
@@ -153,14 +162,6 @@ struct ShareInspector: View {
             if share.networkRule.mode != .anywhere {
                 row("Network", share.networkRule.mode.title)
             }
-        } footer: {
-            HStack {
-                Button("Edit Share…") { actions.edit(shareID) }
-                Spacer()
-                Button("Show Activity") { model.showLog(for: shareID) }
-            }
-            .buttonStyle(.link)
-            .controlSize(.small)
         }
     }
 
@@ -197,6 +198,15 @@ struct SpeedFigure: View {
             Text(unit).font(.caption2).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+extension AddressKind.Resolved {
+    var symbol: String {
+        switch self {
+        case .lan: "network"
+        case .tailscale: "point.3.filled.connected.trianglepath.dotted"
+        }
     }
 }
 

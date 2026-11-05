@@ -22,10 +22,10 @@ struct MainWindow: View {
     @SceneStorage("showInspector") private var showInspector = true
 
     @State private var sidebar: SidebarItem? = .all
-    @State private var selectedShare: UUID?
+    @State private var selectedShares: Set<UUID> = []
     @State private var sheet: SheetRoute?
     @State private var search = ""
-    @State private var pendingDeletion: Share?
+    @State private var pendingDeletion: [Share] = []
     /// The group whose name is being edited in the sidebar.
     @State private var editingGroup: UUID?
 
@@ -47,15 +47,17 @@ struct MainWindow: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(selection: $sidebar, editingGroup: $editingGroup, newGroup: newGroup)
+            SidebarView(selection: $sidebar, editingGroup: $editingGroup, selectedShares: selectedShares, newGroup: newGroup)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 280)
         } detail: {
-            ShareListView(filter: sidebar ?? .all, search: search, selection: $selectedShare, actions: actions)
+            ShareListView(filter: sidebar ?? .all, search: search, selection: $selectedShares, actions: actions)
                 .searchable(text: $search, placement: .toolbar, prompt: "Search")
         }
         .inspector(isPresented: $showInspector) {
             Group {
-                if let id = selectedShare, model.config.share(id: id) != nil {
+                if selectedShares.count > 1 {
+                    BulkInspector(shareIDs: selectedShares, actions: actions)
+                } else if let id = selectedShares.first, model.config.share(id: id) != nil {
                     ShareInspector(shareID: id, actions: actions)
                 } else {
                     ContentUnavailableView("No Share Selected", systemImage: "externaldrive.connected.to.line.below")
@@ -66,21 +68,21 @@ struct MainWindow: View {
         .toolbar { toolbar }
         .sheet(item: $sheet, content: sheetContent)
         .alert(
-            pendingDeletion.map { String(localized: "Delete “\($0.name)”?") } ?? "",
-            isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }),
-            presenting: pendingDeletion
-        ) { share in
+            deletionTitle,
+            isPresented: Binding(get: { !pendingDeletion.isEmpty }, set: { if !$0 { pendingDeletion = [] } }),
+            presenting: pendingDeletion.isEmpty ? nil : pendingDeletion
+        ) { shares in
             Button("Delete", role: .destructive) {
-                if selectedShare == share.id { selectedShare = nil }
-                Task { await model.coordinator.remove(share.id, unmountFirst: true) }
+                selectedShares.subtract(shares.map(\.id))
+                for share in shares {
+                    Task { await model.coordinator.remove(share.id, unmountFirst: true) }
+                }
             }
             Button("Cancel", role: .cancel) {}
-        } message: { share in
-            Text(model.runtime(share.id).state.isMounted
-                 ? "The share will be unmounted and its password removed from your Keychain."
-                 : "Its password will be removed from your Keychain.")
+        } message: { shares in
+            Text(deletionMessage(shares))
         }
-        .focusedSceneValue(\.selectedShareID, selectedShare)
+        .focusedSceneValue(\.selectedShareIDs, selectedShares)
         .onChange(of: model.pendingRoute, initial: true) { _, route in
             guard let route else { return }
             model.pendingRoute = nil
@@ -95,7 +97,7 @@ struct MainWindow: View {
             }
         }
         .onChange(of: model.config.shares.map(\.id)) { _, ids in
-            if let selectedShare, !ids.contains(selectedShare) { self.selectedShare = nil }
+            selectedShares.formIntersection(ids)
         }
         .onChange(of: model.config.groups.map(\.id)) { _, ids in
             if case .group(let id) = sidebar, !ids.contains(id) { sidebar = .all }
@@ -131,7 +133,7 @@ struct MainWindow: View {
     private func sheetContent(_ route: SheetRoute) -> some View {
         switch route {
         case .editor(let draft):
-            ShareEditorView(draft: draft) { saved in selectedShare = saved.id }
+            ShareEditorView(draft: draft) { saved in selectedShares = [saved.id] }
                 .environment(model)
         case .credentials(let id):
             CredentialsSheet(shareID: id)
@@ -162,13 +164,33 @@ struct MainWindow: View {
             },
             changeCredentials: { sheet = .credentials($0) },
             speedTest: { sheet = .speedTest($0) },
-            delete: { id in pendingDeletion = model.config.share(id: id) }
+            delete: { ids in pendingDeletion = model.config.shares.filter { ids.contains($0.id) } }
         )
+    }
+
+    private var deletionTitle: String {
+        if pendingDeletion.count == 1, let share = pendingDeletion.first {
+            return String(localized: "Delete “\(share.name)”?")
+        }
+        return String(localized: "Delete \(pendingDeletion.count) Shares?")
+    }
+
+    private func deletionMessage(_ shares: [Share]) -> LocalizedStringKey {
+        let anyMounted = shares.contains { model.runtime($0.id).state.isMounted }
+        if shares.count == 1 {
+            return anyMounted
+                ? "The share will be unmounted and its password removed from your Keychain."
+                : "Its password will be removed from your Keychain."
+        }
+        return anyMounted
+            ? "Mounted shares will be unmounted, and all of their passwords removed from your Keychain."
+            : "Their passwords will be removed from your Keychain."
     }
 
     private func newShare(prefill: Share? = nil) {
         var share = prefill ?? Share()
         if prefill == nil, case .group(let id) = sidebar { share.groupID = id }
+        model.assignFreshColor(to: &share)
         sheet = .editor(ShareDraft(share: share, password: "", isNew: true))
     }
 
@@ -184,9 +206,9 @@ struct MainWindow: View {
         case .newShare(let prefill): newShare(prefill: prefill)
         case .newGroup: newGroup()
         case .editShare(let id): actions.edit(id)
-        case .changeCredentials(let id): selectedShare = id; sheet = .credentials(id)
+        case .changeCredentials(let id): selectedShares = [id]; sheet = .credentials(id)
         case .importShares: sheet = .importer
-        case .speedTest(let id): selectedShare = id; sheet = .speedTest(id)
+        case .speedTest(let id): selectedShares = [id]; sheet = .speedTest(id)
         case .select(let id):
             // Make sure the share is visible under the current sidebar filter.
             switch sidebar {
@@ -194,7 +216,7 @@ struct MainWindow: View {
             case .attention where !model.runtime(id).state.isProblem: sidebar = .all
             default: break
             }
-            selectedShare = id
+            selectedShares = [id]
             showInspector = true
         }
     }
@@ -205,5 +227,5 @@ struct ShareActions {
     var edit: (UUID) -> Void
     var changeCredentials: (UUID) -> Void
     var speedTest: (UUID) -> Void
-    var delete: (UUID) -> Void
+    var delete: (Set<UUID>) -> Void
 }

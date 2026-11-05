@@ -98,6 +98,30 @@ import Testing
 }
 
 @Suite struct MiscTests {
+    @Test func newShareColorsAvoidOnesInUse() {
+        typealias Color = ShareIcon.IconColor
+        let allButMint = Color.allCases.filter { $0 != .mint }
+        #expect(Color.random(avoiding: allButMint) == .mint)
+
+        // With every color taken, it falls back to the least used.
+        let pinkTwice = Color.allCases + Color.allCases.filter { $0 != .pink }
+        #expect(Color.random(avoiding: pinkTwice) == .pink)
+
+        let unused = Set(Color.allCases).subtracting([.blue, .red])
+        for _ in 0..<100 { #expect(unused.contains(Color.random(avoiding: [.blue, .red]))) }
+    }
+
+    @Test func findsTheAddressAMountUses() {
+        var share = Share()
+        share.addresses = [
+            ServerAddress(host: "nas.local", port: 1445),
+            ServerAddress(host: "10.0.0.5", kind: .tailscale),
+        ]
+        #expect(share.address(matchingHost: "NAS._smb._tcp.local")?.display == "nas.local:1445")
+        #expect(share.address(matchingHost: "10.0.0.5")?.resolvedKind == .tailscale)
+        #expect(share.address(matchingHost: "other.local") == nil)
+    }
+
     @Test func backoffGrowsAndCaps() {
         let b = Backoff(base: 2, maximum: 60, jitter: 0)
         #expect(b.delay(forAttempt: 1, random: 0) == 2)
