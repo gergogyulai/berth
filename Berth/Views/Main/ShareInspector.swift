@@ -113,7 +113,8 @@ struct ShareInspector: View {
                             .truncationMode(.middle)
                             .textSelection(.enabled)
                     }
-                    .foregroundStyle(isActive ? .primary : .secondary)
+                    // Concrete colors: with the 26.5 SDK, `.secondary` here renders as bright as `.primary`.
+                    .foregroundStyle(isActive ? Color.primary : Color.secondary)
                     .help(isActive ? "Connected via \(kind.title)" : "")
                 }
             }

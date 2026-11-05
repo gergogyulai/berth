@@ -19,6 +19,15 @@ xcodebuild -project Berth.xcodeproj -scheme Berth -configuration Debug -derivedD
 APP="build/Build/Products/Debug/Berth.app"
 [ -d "$APP" ] || { echo "Build produced no app." >&2; exit 1; }
 
+# SwiftUI changes behavior based on the SDK an app was linked against, and releases are built with an
+# older Xcode than this Mac may have. Mark the build with the release SDK so it renders like a release:
+# 26.5 here blanks a Text(Image) menu label that looks fine with 27.2. Keep this in step with the Xcode
+# on the release runner, or set RELEASE_SDK= (empty) to skip.
+RELEASE_SDK="${RELEASE_SDK-26.5}"
+if [ -n "$RELEASE_SDK" ]; then
+    vtool -set-build-version macos 26.0 "$RELEASE_SDK" -replace -output "$APP/Contents/MacOS/Berth" "$APP/Contents/MacOS/Berth"
+fi
+
 WORK="$(mktemp -d)"
 KC="$WORK/signing.keychain-db"
 cleanup() {
