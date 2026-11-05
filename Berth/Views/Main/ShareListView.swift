@@ -5,7 +5,7 @@ struct ShareListView: View {
     @Environment(AppModel.self) private var model
     var filter: SidebarItem
     var search: String
-    @Binding var selection: UUID?
+    @Binding var selection: Set<UUID>
     var actions: ShareActions
 
     var body: some View {
@@ -32,24 +32,32 @@ struct ShareListView: View {
                 .listStyle(.inset)
                 .alternatingRowBackgrounds(.disabled)
                 .contextMenu(forSelectionType: UUID.self) { ids in
-                    if let id = ids.first { ShareContextMenu(shareID: id, actions: actions) }
+                    if ids.count > 1 {
+                        BulkShareMenu(shareIDs: ids, actions: actions)
+                    } else if let id = ids.first {
+                        ShareContextMenu(shareID: id, actions: actions)
+                    }
                 } primaryAction: { ids in
                     // Double-click does the obvious thing: open what's mounted, mount what isn't.
-                    if let id = ids.first { openOrMount(id) }
+                    ids.forEach(openOrMount)
                 }
                 .onDeleteCommand {
-                    if let selection { actions.delete(selection) }
+                    if !selection.isEmpty { actions.delete(selection) }
                 }
             }
         }
         .navigationTitle(navigationTitle)
         .navigationSubtitle(subtitle)
+        // Bulk actions must never reach shares that filtering has hidden from view.
+        .onChange(of: sections.flatMap { $0.shares.map(\.id) }) { _, visible in
+            if selection.count > 1 { selection.formIntersection(visible) }
+        }
     }
 
     @ViewBuilder
     private func rows(_ section: ListSection) -> some View {
         ForEach(section.shares) { share in
-            ShareRow(share: share, isSelected: selection == share.id)
+            ShareRow(share: share, isSelected: selection == [share.id])
                 .tag(share.id)
                 .draggable(share.id.uuidString)
         }
@@ -126,6 +134,7 @@ struct ShareListView: View {
     }
 
     private var subtitle: String {
+        if selection.count > 1 { return String(localized: "\(selection.count) selected") }
         let shares = filtered
         guard !shares.isEmpty else { return "" }
         let mounted = shares.filter { model.runtime($0.id).state.isMounted }.count
@@ -317,7 +326,7 @@ struct ShareContextMenu: View {
                 }
             }
             Button("Duplicate", systemImage: "plus.square.on.square") { model.duplicate(share) }
-            Button("Delete…", systemImage: "trash", role: .destructive) { actions.delete(shareID) }
+            Button("Delete…", systemImage: "trash", role: .destructive) { actions.delete([shareID]) }
         }
     }
 }

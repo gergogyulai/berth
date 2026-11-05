@@ -69,6 +69,7 @@ struct ImportSheet: View {
                                     let host = await BonjourBrowser.resolveHost(serviceName: server.name) ?? server.host
                                     var share = Share(displayName: server.name, addresses: [ServerAddress(host: host)])
                                     share.icon = ShareImporter.Candidate.guessIcon(for: server.name)
+                                    model.assignFreshColor(to: &share)
                                     onConfigure(ShareDraft(share: share, password: "", isNew: true))
                                 }
                             }
@@ -114,7 +115,9 @@ struct ImportSheet: View {
     private func importChosen() {
         var added: [UUID] = []
         for candidate in candidates where chosen.contains(candidate.id) {
-            let share = candidate.makeShare()
+            var share = candidate.makeShare()
+            // Saved one at a time, so each share in the batch sees the colors before it as taken.
+            model.assignFreshColor(to: &share)
             var password: String?
             if importPasswords, share.auth == .registered {
                 password = Keychain.finderPassword(server: candidate.host, account: candidate.username)

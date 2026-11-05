@@ -99,6 +99,11 @@ public struct Share: Codable, Identifiable, Hashable, Sendable {
 
     public var primaryHost: String { addresses.first?.host ?? "" }
 
+    /// The configured address a mount's host (as the kernel reports it) belongs to.
+    public func address(matchingHost host: String) -> ServerAddress? {
+        addresses.first { SMBURL.hostsMatch($0.trimmedHost, host) }
+    }
+
     /// `host/share` for compact display.
     public var locationSummary: String {
         let host = primaryHost.isEmpty ? "—" : primaryHost

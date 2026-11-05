@@ -15,6 +15,13 @@ public struct ShareIcon: Codable, Hashable, Sendable {
 
     public enum IconColor: String, Codable, CaseIterable, Sendable {
         case blue, indigo, purple, pink, red, orange, yellow, green, mint, teal, cyan, brown, graphite
+
+        /// A random color, from the ones used least: one nothing uses yet, while any are left.
+        public static func random(avoiding used: [IconColor]) -> IconColor {
+            let counts = Dictionary(used.map { ($0, 1) }, uniquingKeysWith: +)
+            let fewest = allCases.map { counts[$0, default: 0] }.min() ?? 0
+            return allCases.filter { counts[$0, default: 0] == fewest }.randomElement() ?? .blue
+        }
     }
 
     /// A curated set of presets for the icon picker.

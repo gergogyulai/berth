@@ -6,6 +6,8 @@ struct SidebarView: View {
     @Binding var selection: SidebarItem?
     /// The group whose name is being edited in place.
     @Binding var editingGroup: UUID?
+    /// The shares selected in the list. Dragging one of them to a group takes them all along.
+    var selectedShares: Set<UUID>
     var newGroup: () -> Void
 
     @State private var editingName = ""
@@ -44,7 +46,6 @@ struct SidebarView: View {
             editingGroup = id
             return .handled
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) { NetworkStatusFooter() }
         .onChange(of: editingGroup, initial: true) { _, id in
             guard let id, let group = model.config.group(id: id) else { return }
             editingName = group.name
@@ -71,8 +72,8 @@ struct SidebarView: View {
         .tag(SidebarItem.group(group.id))
         // Dropping shares (dragged from the list as UUID strings) onto a group moves them there.
         .dropDestination(for: String.self) { items, _ in
-            let ids = items.compactMap(UUID.init(uuidString:))
-            for id in ids { model.move(id, toGroup: group.id) }
+            let ids = Set(items.compactMap(UUID.init(uuidString:)))
+            for id in ids.isDisjoint(with: selectedShares) ? ids : selectedShares { model.move(id, toGroup: group.id) }
             return !ids.isEmpty
         }
     }
@@ -118,54 +119,4 @@ struct SidebarView: View {
         "folder", "film.stack", "music.note", "photo.stack", "clock.arrow.circlepath", "briefcase",
         "house", "hammer", "archivebox", "gamecontroller", "star", "server.rack",
     ]
-}
-
-/// One quiet line at the bottom of the sidebar: where you are and whether Tailscale is up.
-struct NetworkStatusFooter: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let snap = model.network.snapshot
-        Button {
-            model.showSettings(tab: .networks)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: symbol(snap))
-                    .foregroundStyle(snap.isOnline ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
-                    .frame(width: 16)
-                Text(description(snap))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(snap.summary)
-        .accessibilityLabel(snap.summary)
-    }
-
-    private func symbol(_ snap: NetworkSnapshot) -> String {
-        guard snap.isOnline else { return "wifi.slash" }
-        return snap.usesWired ? "cable.connector" : "wifi"
-    }
-
-    private func description(_ snap: NetworkSnapshot) -> String {
-        guard snap.isOnline else { return String(localized: "Offline") }
-        var parts: [String] = []
-        if let ssid = snap.ssid {
-            parts.append(ssid)
-        } else if snap.usesWired {
-            parts.append(String(localized: "Ethernet"))
-        } else {
-            parts.append(String(localized: "Connected"))
-        }
-        if snap.tailscale.isUp { parts.append("Tailscale") }
-        if snap.isConstrained { parts.append(String(localized: "Low Data")) } else if snap.isExpensive { parts.append(String(localized: "Metered")) }
-        return parts.joined(separator: " · ")
-    }
 }

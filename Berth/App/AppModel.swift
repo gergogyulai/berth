@@ -108,11 +108,20 @@ final class AppModel {
             try Keychain.setPassword(password, for: share.id, label: share.name, server: share.primaryHost, username: share.username)
         } else if share.auth != .registered {
             Keychain.deletePassword(for: share.id)
+        } else {
+            Keychain.updateDetails(for: share.id, label: share.name, server: share.primaryHost, username: share.username)
         }
         store.upsert(share)
         if let preset = share.options.preset { try? NSMBConfEditor.apply(preset, toHost: share.primaryHost) }
         coordinator.shareDidChange(share.id)
         log.add(.info, isNew ? "Share added" : "Share updated", share: share)
+    }
+
+    /// Gives a new share with the generic icon a color of its own. Icons chosen to suit the share's
+    /// name (Media, Music…) keep the color that goes with them.
+    func assignFreshColor(to share: inout Share) {
+        guard share.icon == .default else { return }
+        share.icon.color = .random(avoiding: config.shares.map(\.icon.color))
     }
 
     func duplicate(_ share: Share) {
