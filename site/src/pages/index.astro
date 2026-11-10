@@ -1,41 +1,59 @@
 ---
-import Ascii from "ascii.rest/astro";
-import "@fontsource-variable/big-shoulders-display";
-import "@fontsource-variable/jetbrains-mono";
+import Shot from "../components/Shot.astro";
+import mainLight from "../assets/shots/main-light.png";
+import mainDark from "../assets/shots/main-dark.png";
+import logLight from "../assets/shots/log-light.png";
+import logDark from "../assets/shots/log-dark.png";
+import editorLight from "../assets/shots/editor-light.png";
+import editorDark from "../assets/shots/editor-dark.png";
+import smbLight from "../assets/shots/smb-light.png";
+import smbDark from "../assets/shots/smb-dark.png";
+import menu from "../assets/shots/menu.png";
 
 const repo = "https://github.com/gergogyulai/berth";
 const download = `${repo}/releases/latest`;
+const brew = "brew install gergogyulai/tap/berth";
 
-const features = [
+const details = [
+  { title: "Keychain", body: "One password item per share. Never synced, never exported." },
+  { title: "Wake-on-LAN", body: "Wakes a sleeping server, then mounts it." },
+  { title: "Finder", body: "Custom volume icons and sidebar pins." },
+  { title: "iCloud sync", body: "The same share list on every Mac." },
+  { title: "Import", body: "Picks up mounted volumes, recent servers and Bonjour." },
+  { title: "Hot keys", body: "Mount or unmount everything, from anywhere." },
+];
+
+const scripts = [
   {
-    tag: "Mount",
-    title: "Every share, set up once",
-    body: "Add a host with fallback addresses, sign in as a user, domain user or guest, and give each share its own name, icon, mount point and group. Passwords go in your Keychain, one item per share.",
+    id: "cli",
+    label: "Terminal",
+    lines: [
+      ["$ ", "berth list"],
+      ["$ ", "berth mount media"],
+      ["$ ", "berth unmount --group Studio --force"],
+      ["$ ", 'cd "$(berth path media)"'],
+    ],
   },
   {
-    tag: "Reconnect",
-    title: "Comes back on its own",
-    body: "Switch from Wi-Fi to Ethernet, close the lid, toggle a VPN. Berth notices and remounts. Stale mounts get probed off the main thread, force-unmounted and brought back. A share you eject in Finder stays ejected.",
+    id: "applescript",
+    label: "AppleScript",
+    lines: [
+      ["", 'tell application "Berth"'],
+      ["", '    mount "Media"'],
+      ["", "    get state of every share"],
+      ["", '    unmount all group "Studio"'],
+      ["", "end tell"],
+    ],
   },
   {
-    tag: "Route",
-    title: "Knows where you are",
-    body: "Tailscale being down is its own state, and MagicDNS and 100.x addresses are recognised. A share can mount only on home Wi-Fi, or at home and over Tailscale everywhere else. Wake-on-LAN included, and it holds off on metered networks.",
-  },
-  {
-    tag: "Tune",
-    title: "Faster SMB, no man pages",
-    body: "Edit nsmb.conf per server with Fast LAN, Tailscale/WAN and Compatibility presets, then run a speed test on the share to see what changed.",
-  },
-  {
-    tag: "Finder",
-    title: "Feels like part of macOS",
-    body: "Custom volume icons, pinning to the Finder sidebar, Open in Finder or Terminal, and Copy Path. Import shares that are already mounted, plus Finder's recent servers and anything on Bonjour.",
-  },
-  {
-    tag: "Sync",
-    title: "Your setup, on every Mac",
-    body: "Your share list syncs through iCloud Drive and exports to JSON. Passwords never leave the Keychain. They aren't synced or exported.",
+    id: "url",
+    label: "URL",
+    lines: [
+      ["", "berth://mount/media"],
+      ["", "berth://unmount/media"],
+      ["", "berth://mount-all?group=Studio"],
+      ["", "berth://open/media"],
+    ],
   },
 ];
 ---
@@ -45,465 +63,1014 @@ const features = [
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Berth: SMB shares that stay mounted</title>
+    <title>Berth. Shares that stay mounted.</title>
     <meta
       name="description"
-      content="Berth is a macOS menu bar app that mounts your SMB shares and keeps them mounted at home, over Tailscale, and after sleep."
+      content="Berth mounts your SMB shares on macOS and keeps them mounted through sleep, network changes and Tailscale."
     />
-    <meta name="theme-color" content="#080b12" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <script is:inline>
+      document.documentElement.classList.add("js");
+    </script>
   </head>
   <body>
-    <div class="scene" aria-hidden="true">
-      <Ascii piece="night-coast" label="A lighthouse turning its beam over a dark sea" />
-    </div>
-    <div class="shade" aria-hidden="true"></div>
-
     <header class="nav">
-      <a class="brand" href="/">
-        <img src="/icon.svg" alt="" width="28" height="28" />
-        <span>Berth</span>
-      </a>
-      <nav>
-        <a href="#features">Features</a>
-        <a href="#automation">Automation</a>
-        <a href={repo}>GitHub</a>
-        <a class="nav-cta" href={download}>Download</a>
-      </nav>
+      <div class="nav-inner">
+        <a class="brand" href="/">
+          <img src="/icon.svg" alt="" width="24" height="24" />
+          Berth
+        </a>
+        <nav aria-label="Primary">
+          <a class="nav-link" href="#features">Features</a>
+          <a class="nav-link" href="#automation">Automation</a>
+          <a class="nav-link" href={repo}>GitHub</a>
+          <a class="button button-small" href="#get">Download</a>
+        </nav>
+      </div>
     </header>
 
     <main>
       <section class="hero">
-        <p class="eyebrow">SMB for macOS</p>
-        <h1>Network shares<br />that stay mounted</h1>
-        <p class="lede">
-          Berth lives in your menu bar and keeps your SMB shares mounted: at home, over
-          Tailscale, and after sleep. Set a share up once and stop thinking about it.
-        </p>
-        <div class="actions">
-          <a class="btn btn-primary" href={download}>
-            <svg viewBox="0 0 17 20" width="15" height="18" aria-hidden="true"
-              ><path
-                fill="currentColor"
-                d="M14.1 10.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9C3.6 4.8 2 5.8 1 7.4c-1.9 3.3-.5 8.1 1.4 10.8.9 1.3 2 2.8 3.4 2.7 1.4-.1 1.9-.9 3.5-.9s2.1.9 3.5.9c1.5 0 2.4-1.3 3.3-2.6 1-1.5 1.5-3 1.5-3.1-.1 0-2.5-1-2.5-3.8zM11.5 3c.7-.9 1.2-2.1 1.1-3.3-1 0-2.3.7-3 1.6-.7.8-1.3 2-1.1 3.2 1.1.1 2.3-.6 3-1.5z"
-              ></path></svg
-            >
-            Download for macOS
-          </a>
-          <a class="btn btn-ghost" href={repo}>View on GitHub</a>
+        <div class="wrap hero-copy">
+          <h1>Shares that stay <span class="tint">mounted.</span></h1>
+          <p class="intro">
+            Berth mounts your SMB shares and keeps them there. Through sleep, network changes, and the
+            switch from home Wi&#8209;Fi to Tailscale.
+          </p>
+          <div class="actions">
+            <a class="button" href={download}>Download</a>
+            <a class="more" href={repo}>View on GitHub</a>
+          </div>
+          <p class="fine">Free and open source. Requires macOS 26.</p>
         </div>
-        <p class="fine">Requires macOS 26 or later</p>
+        <div class="hero-shot shot shot-window">
+          <Shot
+            light={mainLight}
+            dark={mainDark}
+            width={1300}
+            eager
+            alt="The Berth window: six shares in two groups, four of them mounted, with details for the selected share."
+          />
+        </div>
       </section>
 
-      <section id="features" class="features">
-        <h2>What it does</h2>
-        <ol class="grid">
-          {
-            features.map((f, i) => (
-              <li class="card">
-                <p class="card-tag">
-                  #{i + 1} {f.tag}
-                </p>
-                <h3>{f.title}</h3>
-                <p>{f.body}</p>
-              </li>
-            ))
-          }
-        </ol>
-      </section>
-
-      <section id="automation" class="automation">
-        <div class="automation-copy">
-          <h2>Scriptable all the way down</h2>
-          <p>
-            Global hot keys, Shortcuts actions, AppleScript, <code>berth://</code> URLs and a
-            <code>berth</code> command-line tool. Install the CLI from Settings &rarr; Command
-            Line and mount from anywhere.
+      <section id="features" class="feature feature-alt">
+        <div class="wrap copy reveal">
+          <p class="eyebrow">Reconnect</p>
+          <h2><span>Close the lid.</span> <span>Open it.</span> <span>Still mounted.</span></h2>
+          <p class="lede">
+            Berth notices sleep, Wi&#8209;Fi and VPN changes, then checks every mount. Dead ones are
+            cleared and brought back before Finder hangs on them. Shares you eject yourself stay ejected.
           </p>
         </div>
-        <div class="terminals">
-          <figure class="term">
-            <figcaption>zsh</figcaption>
-            <pre><code><span class="p">$</span> berth list
-<span class="p">$</span> berth mount nas-media
-<span class="p">$</span> berth unmount --group Backups --force
-<span class="p">$</span> cd "$(berth path nas-media)"</code></pre>
-          </figure>
-          <figure class="term">
-            <figcaption>AppleScript</figcaption>
-            <pre><code>tell application "Berth"
-    mount "NAS Media"
-    get state of every share
-    unmount all group "Backups"
-end tell</code></pre>
-          </figure>
+        <div class="shot shot-log reveal">
+          <Shot
+            light={logLight}
+            dark={logDark}
+            width={1000}
+            alt="Berth’s connection log: after the Mac wakes, a stale mount is removed and remounted and a Tailscale share returns when the tunnel does."
+          />
         </div>
       </section>
 
-      <section class="closer">
-        <h2>Drop anchor</h2>
-        <a class="btn btn-primary" href={download}>Download Berth</a>
+      <section class="feature">
+        <div class="wrap copy reveal">
+          <p class="eyebrow">Networks</p>
+          <h2><span>On the LAN at home.</span> <span>On Tailscale everywhere else.</span></h2>
+          <p class="lede">
+            Give a share its local address and a Tailscale fallback. Berth uses whichever fits the
+            network you’re on, and waits on hotspots and metered connections.
+          </p>
+        </div>
+        <div class="shot shot-window reveal">
+          <Shot
+            light={editorLight}
+            dark={editorDark}
+            width={1180}
+            alt="Editing a share in Berth: a local address, a Tailscale fallback address, and a password saved in the Keychain."
+          />
+        </div>
+      </section>
+
+      <section class="feature feature-alt feature-tiles">
+        <div class="wrap tiles">
+          <article class="tile reveal">
+            <div class="tile-copy">
+              <p class="eyebrow">Performance</p>
+              <h3>Faster SMB, without the man page.</h3>
+              <p>
+                Presets for fast LANs, Tailscale links and older NAS boxes, written to nsmb.conf per
+                server. A built-in speed test shows what changed.
+              </p>
+            </div>
+            <div class="tile-shot tile-shot-smb">
+              <Shot
+                light={smbLight}
+                dark={smbDark}
+                width={672}
+                alt="Berth’s SMB settings, with Fast LAN, Tailscale / WAN and Compatibility presets for a server."
+              />
+            </div>
+          </article>
+          <article class="tile tile-harbor reveal">
+            <div class="tile-copy">
+              <p class="eyebrow">Menu bar</p>
+              <h3>The window is optional.</h3>
+              <p>Mount, unmount, or open any share in Finder straight from the menu bar.</p>
+            </div>
+            <div class="tile-shot tile-shot-menu">
+              <Shot
+                light={menu}
+                width={419}
+                alt="Berth’s menu bar menu, listing each share with its state, plus Mount All and Unmount All."
+              />
+            </div>
+          </article>
+        </div>
+        <div class="wrap details-block">
+          <h2 class="reveal">Small things, handled.</h2>
+          <ul class="details">
+            {
+              details.map((d) => (
+                <li class="reveal">
+                  <h3>{d.title}</h3>
+                  <p>{d.body}</p>
+                </li>
+              ))
+            }
+          </ul>
+        </div>
+      </section>
+
+      <section id="automation" class="feature automation">
+        <div class="wrap copy reveal">
+          <p class="eyebrow">Automation</p>
+          <h2>Script it.</h2>
+          <p class="lede">
+            A command-line tool, AppleScript, Shortcuts actions and <code>berth://</code> URLs.
+          </p>
+        </div>
+        <div class="wrap reveal">
+          <div class="console">
+            <div class="segments" role="tablist" aria-label="Scripting interface">
+              {
+                scripts.map((s, i) => (
+                  <button
+                    role="tab"
+                    id={`tab-${s.id}`}
+                    aria-controls={`panel-${s.id}`}
+                    aria-selected={i === 0 ? "true" : "false"}
+                    tabindex={i === 0 ? 0 : -1}
+                  >
+                    {s.label}
+                  </button>
+                ))
+              }
+            </div>
+            {
+              scripts.map((s, i) => (
+                <pre
+                  role="tabpanel"
+                  id={`panel-${s.id}`}
+                  aria-labelledby={`tab-${s.id}`}
+                  tabindex="0"
+                  hidden={i !== 0}
+                ><code>{s.lines.map(([prompt, text]) => (<Fragment>{prompt && <span class="prompt">{prompt}</span>}{text}{"\n"}</Fragment>))}</code></pre>
+              ))
+            }
+          </div>
+        </div>
+      </section>
+
+      <section id="get" class="get">
+        <div class="wrap copy reveal">
+          <img class="get-icon" src="/icon.svg" alt="" width="96" height="96" />
+          <h2>Get Berth.</h2>
+          <div class="brew">
+            <code>{brew}</code>
+            <button class="brew-copy" type="button" data-copy={brew} aria-label="Copy the Homebrew command">
+              <span data-label>Copy</span>
+            </button>
+          </div>
+          <div class="actions">
+            <a class="button" href={download}>Download</a>
+            <a class="more" href={repo}>View on GitHub</a>
+          </div>
+          <p class="fine">
+            Requires macOS 26. Berth isn’t notarized: Homebrew takes care of that, and with the download
+            you choose Open Anyway in System Settings › Privacy &amp; Security the first time.
+          </p>
+        </div>
       </section>
     </main>
 
     <footer class="footer">
-      <span>Berth &middot; macOS 26+</span>
-      <span>
-        Background: <a href="https://ascii.rest/night-coast/">night coast</a> by
-        <a href="https://github.com/bas3line">@bas3line</a>
-      </span>
+      <div class="wrap footer-inner">
+        <span>Berth is MIT licensed.</span>
+        <span class="footer-links">
+          <a href={repo}>GitHub</a>
+          <a href={`${repo}/releases`}>Releases</a>
+        </span>
+      </div>
     </footer>
+
+    <script>
+      // Reveal on scroll.
+      const reveals = document.querySelectorAll<HTMLElement>(".reveal");
+      if ("IntersectionObserver" in window) {
+        const observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              entry.target.classList.add("in");
+              observer.unobserve(entry.target);
+            }
+          },
+          { rootMargin: "0px 0px -10% 0px" },
+        );
+        reveals.forEach((el) => observer.observe(el));
+      } else {
+        reveals.forEach((el) => el.classList.add("in"));
+      }
+
+      // Scripting tabs.
+      const tabs = [...document.querySelectorAll<HTMLButtonElement>(".segments [role=tab]")];
+      const select = (tab: HTMLButtonElement) => {
+        for (const other of tabs) {
+          const selected = other === tab;
+          other.setAttribute("aria-selected", String(selected));
+          other.tabIndex = selected ? 0 : -1;
+          document.getElementById(other.getAttribute("aria-controls")!)!.hidden = !selected;
+        }
+      };
+      tabs.forEach((tab, i) => {
+        tab.addEventListener("click", () => select(tab));
+        tab.addEventListener("keydown", (event) => {
+          const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+          if (!step) return;
+          const next = tabs[(i + step + tabs.length) % tabs.length];
+          select(next);
+          next.focus();
+        });
+      });
+
+      // Copy the Homebrew command.
+      document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((button) => {
+        const label = button.querySelector<HTMLElement>("[data-label]")!;
+        button.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(button.dataset.copy!);
+            label.textContent = "Copied";
+          } catch {
+            label.textContent = "⌘C";
+          }
+          setTimeout(() => (label.textContent = "Copy"), 1600);
+        });
+      });
+    </script>
   </body>
 </html>
 
 <style is:global>
   :root {
-    --ground: #080b12;
-    --ink: #eef1f6;
-    --muted: #a3b1cf;
-    --line: rgba(163, 177, 207, 0.22);
-    --beam: #ffd27c;
-    --blue: #5a9bff;
-    --display: "Big Shoulders Display Variable", "Arial Narrow", sans-serif;
-    --mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
-    color-scheme: dark;
+    color-scheme: light dark;
+
+    --bg: #ffffff;
+    --bg-alt: #f5f5f7;
+    --surface: #ffffff;
+    --text: #1d1d1f;
+    --text-2: #6e6e73;
+    --hairline: rgba(0, 0, 0, 0.1);
+    --accent: #1f5fe0;
+    --accent-hover: #3b76ee;
+    --on-accent: #ffffff;
+    --nav-bg: rgba(255, 255, 255, 0.72);
+    --glow: rgba(90, 155, 255, 0.34);
+    --tint-from: #4a8dff;
+    --tint-to: #1d49c4;
+    --console-bg: #101319;
+    --console-text: #e8ebf2;
+    --console-dim: #7d8698;
+
+    /* Type: two weights, one family. */
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --regular: 400;
+    --semibold: 600;
+    --size-display: clamp(2.75rem, 1.4rem + 6.2vw, 6rem);
+    --size-headline: clamp(2rem, 1.3rem + 3.1vw, 3.5rem);
+    --size-title: clamp(1.5rem, 1.25rem + 1vw, 2rem);
+    --size-intro: clamp(1.1875rem, 1.05rem + 0.6vw, 1.5rem);
+    --size-body: 1.0625rem;
+    --size-small: 0.875rem;
+    --size-micro: 0.75rem;
+
+    /* Space: one scale. */
+    --s-1: 4px;
+    --s-2: 8px;
+    --s-3: 12px;
+    --s-4: 16px;
+    --s-5: 24px;
+    --s-6: 32px;
+    --s-7: 48px;
+    --s-8: 64px;
+    --section: clamp(88px, 11vw, 152px);
+    --gutter: clamp(20px, 4vw, 32px);
+    --measure: 980px;
+    --radius: 28px;
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   }
 
-  * {
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --bg-alt: #101012;
+      --surface: #1c1c1e;
+      --text: #f5f5f7;
+      --text-2: #a1a1a6;
+      --hairline: rgba(255, 255, 255, 0.14);
+      --accent: #2f6ff0;
+      --accent-hover: #4a84f7;
+      --nav-bg: rgba(0, 0, 0, 0.72);
+      --glow: rgba(37, 86, 214, 0.5);
+      --tint-from: #7fb0ff;
+      --tint-to: #3f78f2;
+      --console-bg: #161618;
+    }
+  }
+
+  *,
+  *::before,
+  *::after {
     box-sizing: border-box;
   }
 
   html {
     scroll-behavior: smooth;
+    scroll-padding-top: 52px;
+    -webkit-text-size-adjust: 100%;
   }
 
   body {
     margin: 0;
-    background: var(--ground);
-    color: var(--ink);
-    font: 14px/1.6 var(--mono);
+    overflow-x: clip;
+    background: var(--bg);
+    color: var(--text);
+    font: var(--regular) var(--size-body) / 1.47 var(--sans);
+    letter-spacing: -0.022em;
     -webkit-font-smoothing: antialiased;
-  }
-
-  a {
-    color: inherit;
-  }
-</style>
-
-<style>
-  /* The scene covers the viewport at its 2:1 ratio, held left of centre so the lighthouse
-     stays in frame on narrow screens. */
-  .scene {
-    --w: max(100vw, 200vh);
-    position: fixed;
-    inset: 0;
-    z-index: -2;
-    overflow: hidden;
-    background: var(--ground);
-  }
-
-  .scene :global(ascii-art) {
-    position: absolute;
-    top: 50%;
-    left: calc((100vw - var(--w)) * 0.15);
-    width: var(--w);
-    transform: translateY(-50%);
-    opacity: 0.8;
-  }
-
-  .shade {
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    background:
-      radial-gradient(ellipse 50% 40% at 50% 55%, rgba(8, 11, 18, 0.8), transparent 75%),
-      linear-gradient(to bottom, rgba(8, 11, 18, 0.5), transparent 25%);
-    pointer-events: none;
-  }
-
-  /* Nav */
-  .nav {
-    position: absolute;
-    inset: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 28px clamp(20px, 5vw, 64px);
-    z-index: 2;
-  }
-
-  .brand,
-  .nav nav a,
-  .eyebrow,
-  .btn,
-  .card-tag,
-  .term figcaption,
-  .footer {
-    font-family: var(--display);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-  }
-
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 20px;
-    text-decoration: none;
-  }
-
-  .nav nav {
-    display: flex;
-    align-items: center;
-    gap: clamp(16px, 4vw, 56px);
-  }
-
-  .nav nav a {
-    font-size: 15px;
-    text-decoration: none;
-    opacity: 0.85;
-  }
-
-  .nav nav a:hover {
-    opacity: 1;
-  }
-
-  .nav .nav-cta {
-    padding: 6px 14px;
-    border: 1px solid rgba(238, 241, 246, 0.5);
-    background: rgba(8, 11, 18, 0.5);
-    opacity: 1;
-  }
-
-  /* Hero */
-  .hero {
-    min-height: 100vh;
-    min-height: 100svh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 120px 24px 18vh;
-    text-align: center;
-  }
-
-  .eyebrow {
-    margin: 0 0 20px;
-    color: var(--beam);
-    font-size: 15px;
-    letter-spacing: 0.3em;
+    text-rendering: optimizeLegibility;
   }
 
   h1,
-  h2 {
+  h2,
+  h3,
+  p,
+  ul,
+  pre {
     margin: 0;
-    font-family: var(--display);
-    font-weight: 250;
-    text-transform: uppercase;
-    line-height: 0.88;
-    letter-spacing: -0.01em;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-weight: var(--semibold);
+    text-wrap: balance;
   }
 
   h1 {
-    font-size: clamp(64px, 12vw, 176px);
-    text-shadow: 0 4px 40px rgba(8, 11, 18, 0.6);
+    font-size: var(--size-display);
+    line-height: 1.04;
+    letter-spacing: -0.035em;
   }
 
+  h2 {
+    font-size: var(--size-headline);
+    line-height: 1.07;
+    letter-spacing: -0.028em;
+  }
+
+  h3 {
+    font-size: var(--size-title);
+    line-height: 1.125;
+    letter-spacing: -0.02em;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.94em;
+    letter-spacing: 0;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
+
+  .wrap {
+    width: min(var(--measure), 100% - 2 * var(--gutter));
+    margin-inline: auto;
+  }
+
+  /* Shared pieces */
+
+  .eyebrow {
+    margin-bottom: var(--s-3);
+    color: var(--accent);
+    font-size: var(--size-body);
+    font-weight: var(--semibold);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .eyebrow,
+    .more,
+    .footer a {
+      color: #6ea8ff;
+    }
+  }
+
+  .intro,
   .lede {
-    max-width: 560px;
-    margin: 32px 0 0;
-    color: var(--ink);
-    font-size: 15px;
-    text-shadow: 0 1px 12px rgba(8, 11, 18, 0.9);
+    color: var(--text-2);
+    font-size: var(--size-intro);
+    line-height: 1.38;
+    letter-spacing: -0.012em;
+    text-wrap: pretty;
+  }
+
+  .fine {
+    color: var(--text-2);
+    font-size: var(--size-small);
+    line-height: 1.45;
+    letter-spacing: -0.01em;
+    text-wrap: pretty;
+  }
+
+  .button {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 22px;
+    border-radius: 980px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: var(--size-body);
+    transition: background 0.2s var(--ease);
+  }
+
+  .button:hover {
+    background: var(--accent-hover);
+  }
+
+  .button-small {
+    min-height: 28px;
+    padding: 0 12px;
+    font-size: var(--size-micro);
+    letter-spacing: -0.01em;
+  }
+
+  .more {
+    font-size: var(--size-body);
+  }
+
+  .more::after {
+    content: "›";
+    display: inline-block;
+    margin-left: 0.3em;
+    transition: transform 0.2s var(--ease);
+  }
+
+  .more:hover::after {
+    transform: translateX(3px);
   }
 
   .actions {
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
-    gap: 12px;
-    margin-top: 36px;
-  }
-
-  .btn {
-    display: inline-flex;
     align-items: center;
-    gap: 10px;
-    padding: 12px 22px;
-    font-size: 17px;
-    text-decoration: none;
-    transition:
-      background 0.15s,
-      transform 0.15s;
+    justify-content: center;
+    gap: var(--s-4) var(--s-5);
   }
 
-  .btn:hover {
-    transform: translateY(-1px);
+  /* Nav */
+
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--nav-bg);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--hairline);
   }
 
-  .btn-primary {
-    background: var(--beam);
-    color: var(--ground);
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: min(var(--measure), 100% - 2 * var(--gutter));
+    height: 52px;
+    margin-inline: auto;
   }
 
-  .btn-primary:hover {
-    background: #ffe9ae;
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    color: var(--text);
+    font-size: 1.3125rem;
+    font-weight: var(--semibold);
+    letter-spacing: -0.02em;
   }
 
-  .btn-ghost {
-    border: 1px solid rgba(238, 241, 246, 0.5);
-    background: rgba(8, 11, 18, 0.45);
-    backdrop-filter: blur(8px);
+  .nav nav {
+    display: flex;
+    align-items: center;
+    gap: var(--s-5);
   }
 
-  .btn-ghost:hover {
-    background: rgba(238, 241, 246, 0.12);
+  .nav-link {
+    color: var(--text);
+    font-size: var(--size-micro);
+    letter-spacing: -0.01em;
+    opacity: 0.8;
+    transition: opacity 0.2s var(--ease);
   }
 
-  .fine {
-    margin: 20px 0 0;
-    color: var(--muted);
-    font-size: 12px;
+  .nav-link:hover {
+    opacity: 1;
   }
 
-  /* Sections */
-  .features,
-  .automation,
-  .closer {
-    width: min(1180px, calc(100% - 40px));
-    margin: 0 auto 120px;
+  /* Hero */
+
+  .hero {
+    position: relative;
+    padding-top: clamp(56px, 8vw, 104px);
+    text-align: center;
+    isolation: isolate;
   }
 
-  h2 {
-    font-size: clamp(48px, 7vw, 96px);
-    margin-bottom: 40px;
+  /* The harbor: one soft pool of the icon's blue under the window. */
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: auto 0 0;
+    z-index: -1;
+    height: 82%;
+    background:
+      radial-gradient(52% 46% at 50% 50%, var(--glow), transparent 72%),
+      linear-gradient(to bottom, transparent 40%, var(--bg-alt));
   }
 
-  .grid {
+  .hero-copy > * + * {
+    margin-top: var(--s-5);
+  }
+
+  .hero h1 {
+    max-width: 11em;
+    margin-inline: auto;
+  }
+
+  .tint {
+    background: linear-gradient(180deg, var(--tint-from), var(--tint-to));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    /* Room for the descender inside the clipped box. */
+    padding-bottom: 0.08em;
+  }
+
+  .hero .intro {
+    max-width: 30em;
+    margin-inline: auto;
+  }
+
+  .hero .actions {
+    margin-top: var(--s-6);
+  }
+
+  .hero .fine {
+    margin-top: var(--s-4);
+  }
+
+  /* Screenshots. The PNGs carry their own window shadow, so each is widened to put the window's
+     edges, not the shadow's, on the layout box. */
+
+  .shot {
+    margin-inline: auto;
+    padding-inline: var(--gutter);
+  }
+
+  .shot img {
+    width: calc(100% * var(--bleed, 1));
+    max-width: none;
+    margin-inline: calc(50% - 50% * var(--bleed, 1));
+  }
+
+  .shot-window {
+    --bleed: 1.104;
+    max-width: calc(1080px + 2 * var(--gutter));
+  }
+
+  .shot-log {
+    --bleed: 1.13;
+    max-width: calc(860px + 2 * var(--gutter));
+  }
+
+  .hero-shot {
+    max-width: calc(1180px + 2 * var(--gutter));
+    margin-top: clamp(24px, 4vw, 56px);
+    animation: rise 1.1s var(--ease) both;
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(24px) scale(0.985);
+    }
+  }
+
+  /* Feature sections */
+
+  .feature {
+    padding-top: var(--section);
+    padding-bottom: calc(var(--section) - 48px);
+  }
+
+  .feature-alt {
+    background: var(--bg-alt);
+  }
+
+  .copy {
+    text-align: center;
+  }
+
+  .copy h2 {
+    max-width: 15em;
+    margin-inline: auto;
+  }
+
+  /* Sentences in a headline wrap whole. */
+  .copy h2 span {
+    display: inline-block;
+  }
+
+  .copy .lede {
+    max-width: 33em;
+    margin: var(--s-5) auto 0;
+  }
+
+  .feature .shot {
+    margin-top: var(--s-7);
+  }
+
+  /* Tiles */
+
+  .feature-tiles {
+    padding-bottom: var(--section);
+  }
+
+  .tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1px;
-    margin: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-5);
+  }
+
+  .tile {
+    display: flex;
+    flex-direction: column;
+    height: 680px;
+    overflow: hidden;
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  .tile-copy {
+    padding: var(--s-7) var(--s-7) 0;
+  }
+
+  .tile-copy p:last-child {
+    margin-top: var(--s-4);
+    color: var(--text-2);
+    text-wrap: pretty;
+  }
+
+  .tile-shot {
+    flex: 1;
+    min-height: 0;
+    margin-top: var(--s-5);
+  }
+
+  .tile-shot picture {
+    display: flex;
+    justify-content: center;
+  }
+
+  .tile-shot img {
+    flex: none;
+  }
+
+  .tile-shot-smb img {
+    width: min(112%, 560px);
+    max-width: none;
+  }
+
+  .tile-shot-menu img {
+    width: min(80%, 340px);
+  }
+
+  /* The one place the icon's gradient takes over. */
+  .tile-harbor {
+    background: linear-gradient(165deg, #5a9bff 0%, #2556d6 52%, #0c2266 100%);
+    color: #ffffff;
+  }
+
+  .tile-harbor .eyebrow,
+  .tile-harbor .tile-copy p:last-child {
+    color: rgba(255, 255, 255, 0.82);
+  }
+
+  .details-block {
+    margin-top: var(--section);
+  }
+
+  .details-block h2 {
+    text-align: center;
+  }
+
+  .details {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--s-7) var(--s-6);
+    margin-top: var(--s-8);
     padding: 0;
     list-style: none;
-    border: 1px solid var(--line);
-    background: var(--line);
   }
 
-  .card {
-    padding: 32px 28px 36px;
-    background: rgba(8, 11, 18, 0.88);
+  .details li {
+    padding-top: var(--s-5);
+    border-top: 1px solid var(--hairline);
   }
 
-  .card-tag {
-    margin: 0 0 18px;
-    color: var(--beam);
-    font-size: 14px;
+  .details h3 {
+    font-size: 1.3125rem;
+    line-height: 1.2;
+    letter-spacing: -0.015em;
   }
 
-  .card h3 {
-    margin: 0 0 12px;
-    font-family: var(--display);
-    font-size: 32px;
-    font-weight: 500;
-    line-height: 1;
-    text-transform: uppercase;
+  .details p {
+    margin-top: var(--s-2);
+    color: var(--text-2);
+    text-wrap: pretty;
   }
 
-  .card p:last-child {
-    margin: 0;
-    color: var(--muted);
-    font-size: 13px;
-  }
+  /* Automation */
 
   .automation {
-    display: grid;
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-    gap: 48px;
-    align-items: start;
+    padding-bottom: var(--section);
   }
 
-  .automation-copy p {
-    margin: 0;
-    padding: 20px 22px;
-    border-left: 2px solid var(--beam);
-    background: rgba(8, 11, 18, 0.9);
-    color: var(--muted);
+  .console {
+    max-width: 720px;
+    margin: var(--s-7) auto 0;
+    padding: var(--s-4);
+    border-radius: var(--radius);
+    background: var(--console-bg);
+    color: var(--console-text);
   }
 
-  code {
-    color: var(--ink);
-    font-family: var(--mono);
+  .segments {
+    display: flex;
+    gap: 2px;
+    width: fit-content;
+    margin-inline: auto;
+    padding: 2px;
+    border-radius: 980px;
+    background: rgba(255, 255, 255, 0.08);
   }
 
-  .terminals {
-    display: grid;
-    gap: 16px;
+  .segments button {
+    min-height: 32px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 980px;
+    background: none;
+    color: var(--console-dim);
+    font: var(--regular) var(--size-small) / 1 var(--sans);
+    letter-spacing: -0.01em;
+    cursor: pointer;
+    transition:
+      background 0.2s var(--ease),
+      color 0.2s var(--ease);
   }
 
-  .term {
-    margin: 0;
-    border: 1px solid var(--line);
-    background: rgba(8, 11, 18, 0.9);
+  .segments button:hover {
+    color: var(--console-text);
   }
 
-  .term figcaption {
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--line);
-    color: var(--muted);
-    font-size: 13px;
+  .segments button[aria-selected="true"] {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
   }
 
-  .term pre {
-    margin: 0;
-    padding: 18px 20px;
+  .console pre {
+    min-height: calc(5 * 1.75em + 2 * var(--s-6));
+    padding: var(--s-6) var(--s-5) var(--s-5);
     overflow-x: auto;
-    font-size: 13px;
-    line-height: 1.7;
+    font: var(--regular) 0.9375rem / 1.75 var(--mono);
+    letter-spacing: 0;
+    outline-offset: -2px;
   }
 
-  .term .p {
-    color: var(--beam);
+  .console pre code {
+    font-size: inherit;
+  }
+
+  .console .prompt {
+    color: var(--console-dim);
     user-select: none;
   }
 
-  .closer {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 40px 0 20px;
+  /* Get */
+
+  .get {
+    padding-block: var(--section);
+    background: var(--bg-alt);
   }
 
-  .closer h2 {
-    font-size: clamp(64px, 11vw, 160px);
-    text-shadow: 0 4px 40px rgba(8, 11, 18, 0.6);
+  .get-icon {
+    margin: 0 auto var(--s-5);
+    filter: drop-shadow(0 12px 24px rgba(12, 34, 102, 0.28));
   }
+
+  .brew {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-4);
+    max-width: 100%;
+    margin-top: var(--s-6);
+    padding: 6px 6px 6px 20px;
+    border-radius: 980px;
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--hairline);
+  }
+
+  .brew code {
+    min-width: 0;
+    overflow-x: auto;
+    font-size: var(--size-small);
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+
+  .brew-copy {
+    flex: none;
+    /* Fixed, so the pill doesn't change size when the label does. */
+    width: 76px;
+    min-height: 32px;
+    padding: 0;
+    text-align: center;
+    white-space: nowrap;
+    border: 0;
+    border-radius: 980px;
+    background: var(--bg-alt);
+    color: var(--text);
+    font: var(--regular) var(--size-small) / 1 var(--sans);
+    letter-spacing: -0.01em;
+    cursor: pointer;
+    transition: background 0.2s var(--ease);
+  }
+
+  .brew-copy:hover {
+    background: var(--hairline);
+  }
+
+  .get .actions {
+    margin-top: var(--s-5);
+  }
+
+  .get .fine {
+    max-width: 36em;
+    margin: var(--s-6) auto 0;
+  }
+
+  /* Footer */
 
   .footer {
+    padding-block: var(--s-5);
+    background: var(--bg-alt);
+    color: var(--text-2);
+    font-size: var(--size-micro);
+    letter-spacing: -0.01em;
+  }
+
+  .footer-inner {
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;
-    gap: 12px;
-    padding: 24px clamp(20px, 5vw, 64px);
-    border-top: 1px solid var(--line);
-    background: rgba(8, 11, 18, 0.85);
-    color: var(--muted);
-    font-size: 13px;
+    gap: var(--s-3);
+    padding-top: var(--s-5);
+    border-top: 1px solid var(--hairline);
+  }
+
+  .footer-links {
+    display: flex;
+    gap: var(--s-5);
+  }
+
+  /* Reveal */
+
+  .js .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition:
+      opacity 0.9s var(--ease),
+      transform 0.9s var(--ease);
+  }
+
+  .js .reveal.in {
+    opacity: 1;
+    transform: none;
+  }
+
+  .details li:nth-child(3n + 2) {
+    transition-delay: 0.08s;
+  }
+
+  .details li:nth-child(3n) {
+    transition-delay: 0.16s;
   }
 
   @media (max-width: 820px) {
-    .automation {
+    .tiles {
       grid-template-columns: 1fr;
-      gap: 0;
     }
 
-    .automation-copy {
-      margin-bottom: 28px;
+    .tile {
+      height: 600px;
     }
 
-    .nav nav a:not(.nav-cta) {
+    .tile-copy {
+      padding: var(--s-6) var(--s-6) 0;
+    }
+
+    .details {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--s-6) var(--s-5);
+    }
+
+    .details li {
+      transition-delay: 0s;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .nav-link {
       display: none;
+    }
+
+    .details {
+      grid-template-columns: 1fr;
+    }
+
+    /* Keep the app legible: let wide windows run off the right edge instead of shrinking to nothing. */
+    .hero-shot img {
+      width: 150%;
+      margin-inline: -7% 0;
+    }
+
+    .hero-shot {
+      overflow: hidden;
+      padding-right: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    .js .reveal,
+    .hero-shot {
+      opacity: 1;
+      transform: none;
+      transition: none;
+      animation: none;
     }
   }
 </style>
