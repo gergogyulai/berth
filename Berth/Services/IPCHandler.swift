@@ -53,7 +53,9 @@ enum IPCHandler {
             if request.group != nil && !only { return .failure("No group named “\(request.group!)”.") }
             model.coordinator.mountAll(groupID: groupID, onlyGroup: only)
             let targets = config.shares.filter { !only || $0.groupID == groupID }
-            guard request.wait else { return IPC.Response(ok: true, message: "Mounting \(targets.count) shares…") }
+            guard request.wait else {
+                return IPC.Response(ok: true, message: targets.count == 1 ? "Mounting 1 share…" : "Mounting \(targets.count) shares…")
+            }
             var lines: [String] = []
             var ok = true
             for share in targets {

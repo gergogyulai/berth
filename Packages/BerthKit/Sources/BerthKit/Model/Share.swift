@@ -78,7 +78,7 @@ public struct Share: Codable, Identifiable, Hashable, Sendable {
         username = try c.value(.username, default: d.username)
         domain = try c.value(.domain, default: d.domain)
         icon = try c.value(.icon, default: d.icon)
-        groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
+        groupID = try? c.decodeIfPresent(UUID.self, forKey: .groupID)
         mountLocation = try c.value(.mountLocation, default: d.mountLocation)
         autoMount = try c.value(.autoMount, default: d.autoMount)
         options = try c.value(.options, default: d.options)
@@ -273,5 +273,20 @@ extension KeyedDecodingContainer {
     /// Decodes a value, falling back to `defaultValue` when the key is missing or malformed.
     func value<T: Decodable>(_ key: Key, default defaultValue: T) throws -> T {
         (try? decodeIfPresent(T.self, forKey: key)) ?? defaultValue
+    }
+
+    /// Decodes an array one element at a time and drops the ones that don't decode, so a single
+    /// damaged entry can't take every other entry down with it.
+    func lossyArray<T: Decodable>(_ key: Key) -> [T] {
+        guard let elements = try? decodeIfPresent([LossyElement<T>].self, forKey: key) else { return [] }
+        return elements.compactMap(\.value)
+    }
+}
+
+private struct LossyElement<T: Decodable>: Decodable {
+    let value: T?
+
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
     }
 }

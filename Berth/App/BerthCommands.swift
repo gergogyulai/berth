@@ -34,6 +34,10 @@ struct BerthCommands: Commands {
             Button("Import Configuration…") { ConfigTransfer.importConfiguration(model: model) }
         }
 
+        // The View menu's Show/Hide Sidebar and Show/Hide Inspector, where Mac users look for them.
+        SidebarCommands()
+        InspectorCommands()
+
         CommandMenu("Share") {
             let ids = selectedShareIDs ?? []
             // `share` is set only for a single selection; several go through `batch`.
@@ -55,7 +59,7 @@ struct BerthCommands: Commands {
                 }
             } else {
                 Button(rt?.state.isMounted == true ? "Unmount" : "Mount") {
-                    if let share { model.coordinator.toggle(share.id) }
+                    if let share { model.toggle(share.id) }
                 }
                 .keyboardShortcut("m")
                 .disabled(share == nil)
@@ -68,7 +72,7 @@ struct BerthCommands: Commands {
             .disabled(isBulk ? batch.mounted.isEmpty : share == nil)
 
             Button("Force Unmount") {
-                if let share { Task { await model.coordinator.unmount(share.id, force: true) } } else { batch.forceUnmount() }
+                if let share { model.forceUnmount([share.id]) } else { batch.forceUnmount() }
             }
             .keyboardShortcut("m", modifiers: [.command, .option])
             .disabled(isBulk ? batch.stale.isEmpty : rt?.state.isMounted != true)
@@ -99,7 +103,7 @@ struct BerthCommands: Commands {
 
             Button("Mount All") { model.coordinator.mountAll() }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
-            Button("Unmount All") { Task { await model.coordinator.unmountAll() } }
+            Button("Unmount All") { model.unmountAll() }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
         }
 

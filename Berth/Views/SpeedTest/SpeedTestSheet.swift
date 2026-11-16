@@ -69,6 +69,7 @@ struct SpeedTestSheet: View {
                 Spacer()
                 if phase != nil && result == nil {
                     Button("Stop") { task?.cancel() }
+                        .keyboardShortcut(.cancelAction)
                 } else {
                     Button("Done") { dismiss() }
                         .keyboardShortcut(.cancelAction)

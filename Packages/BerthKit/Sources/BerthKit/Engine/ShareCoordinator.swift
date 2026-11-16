@@ -50,12 +50,6 @@ public final class ShareCoordinator {
     @ObservationIgnored private var handledDuplicates: Set<String> = []
     @ObservationIgnored private let logger = Logger(subsystem: "app.berth", category: "coordinator")
 
-    private enum ConnectReason: String {
-        case user, launch, network, retry, reconnect, wake, availability
-
-        var isAutomatic: Bool { self != .user }
-    }
-
     public init(store: ConfigStore, network: NetworkMonitor, log: EventLog) {
         self.store = store
         self.network = network
@@ -96,8 +90,10 @@ public final class ShareCoordinator {
         log.add(.info, "Berth started")
 
         Task {
-            // Give the network monitor a moment to produce its first snapshot.
-            for _ in 0..<20 where network.snapshot == .unknown {
+            // Wait for the network monitor's first snapshot; deciding on "offline" before it has
+            // looked would pause every share. It always arrives (the monitor also polls), so the
+            // limit only guards against waiting forever.
+            for _ in 0..<150 where !network.hasBaseline {
                 try? await Task.sleep(for: .milliseconds(100))
             }
             log.add(.info, "Network: \(network.snapshot.summary)")
@@ -116,10 +112,7 @@ public final class ShareCoordinator {
     /// Unmount nothing, just stop timers (used at quit; mounts survive the app).
     public func stop() {
         healthTask?.cancel()
-        for rt in runtimes.values {
-            rt.retryTask?.cancel()
-            rt.operation?.cancel()
-        }
+        for rt in runtimes.values { rt.cancelWork() }
         network.stop()
         if let diskSubscription { DiskWatcher.shared.unsubscribe(diskSubscription) }
     }
@@ -129,8 +122,7 @@ public final class ShareCoordinator {
         let ids = Set(store.config.shares.map(\.id))
         for id in ids where runtimes[id] == nil { runtimes[id] = ShareRuntime(id: id) }
         for id in runtimes.keys where !ids.contains(id) {
-            runtimes[id]?.retryTask?.cancel()
-            runtimes[id]?.operation?.cancel()
+            runtimes[id]?.cancelWork()
             runtimes.removeValue(forKey: id)
         }
     }
@@ -162,17 +154,31 @@ public final class ShareCoordinator {
     @discardableResult
     public func unmount(_ id: UUID, force: Bool = false) async -> UnmountOutcome {
         let rt = runtime(for: id)
+        let intent = (wanted: rt.wantsMounted, overridesRule: rt.overridesRule)
         rt.wantsMounted = false
         rt.overridesRule = false
         rt.retryTask?.cancel()
         rt.retryTask = nil
         rt.nextRetryAt = nil
+        rt.pendingConnect = nil
         rt.attempt = 0
         if rt.operation != nil, !rt.state.isMounted {
             // A connect is in flight; it will notice the changed intent and back out.
             rt.operation?.cancel()
         }
-        return await performUnmount(id, force: force, reason: "Unmounted")
+        let outcome = await performUnmount(id, force: force, reason: "Unmounted")
+        switch outcome {
+        case .busy, .failed:
+            // Still mounted, so nothing changed: keep looking after it as before. Otherwise a refused
+            // unmount would quietly turn reconnecting off for a share that's still in use.
+            if !rt.wantsMounted, rt.state.isMounted {
+                rt.wantsMounted = intent.wanted
+                rt.overridesRule = intent.overridesRule
+            }
+        case .unmounted, .notMounted:
+            break
+        }
+        return outcome
     }
 
     public func toggle(_ id: UUID) {
@@ -267,29 +273,54 @@ public final class ShareCoordinator {
         }
     }
 
-    /// Removes a share, unmounting it first if asked.
-    public func remove(_ id: UUID, unmountFirst: Bool) async {
-        if unmountFirst, runtime(for: id).state.isMounted {
-            await unmount(id, force: true)
+    /// Removes a share, unmounting it first if asked. A share whose volume is in use stays (and
+    /// stays mounted) unless `force` is set; the outcome says which.
+    @discardableResult
+    public func remove(_ id: UUID, unmountFirst: Bool, force: Bool = false) async -> UnmountOutcome {
+        var outcome = UnmountOutcome.notMounted
+        if unmountFirst {
+            outcome = await unmount(id, force: force)
+            switch outcome {
+            case .busy, .failed: return outcome
+            case .unmounted, .notMounted: break
+            }
         }
-        runtimes[id]?.retryTask?.cancel()
-        runtimes[id]?.operation?.cancel()
+        runtimes[id]?.cancelWork()
         store.removeShare(id: id)
         syncRuntimes()
+        return outcome
     }
 
     // MARK: - Connecting
 
     private func connect(_ id: UUID, reason: ConnectReason) {
         let rt = runtime(for: id)
-        guard rt.operation == nil else { return }
+        if let running = rt.operation {
+            // Dropping the request would leave the share wanted but idle: a cancelled attempt ends
+            // in "disconnected", and one started before the network changed tests the old network.
+            // Run again once it's out of the way. (Not for a plain repeat, which would only retry
+            // a failure the running attempt is about to report.)
+            if running.isCancelled || reason == .network || reason == .wake { rt.pendingConnect = reason }
+            return
+        }
         rt.retryTask?.cancel()
         rt.retryTask = nil
         rt.nextRetryAt = nil
+        rt.pendingConnect = nil
         rt.operation = Task { [weak self] in
             await self?.performConnect(id, reason: reason)
-            self?.runtimes[id]?.operation = nil
+            self?.operationEnded(id)
         }
+    }
+
+    private func operationEnded(_ id: UUID) {
+        guard let rt = runtimes[id] else { return }
+        rt.operation = nil
+        guard let reason = rt.pendingConnect else { return }
+        rt.pendingConnect = nil
+        // A wrong password stays wrong: don't spend another attempt on it.
+        guard rt.wantsMounted, !rt.state.isMounted, rt.state != .authFailed else { return }
+        connect(id, reason: reason)
     }
 
     private func performConnect(_ id: UUID, reason: ConnectReason) async {
@@ -355,7 +386,7 @@ public final class ShareCoordinator {
             return
         }
 
-        rt.state = (reason == .reconnect || reason == .wake) ? .reconnecting : .connecting
+        rt.state = (reason.isReconnect && rt.hasBeenMounted) ? .reconnecting : .connecting
 
         // Find the first address that answers on the SMB port.
         var chosen = await firstReachable(candidates, share: share)
@@ -397,12 +428,27 @@ public final class ShareCoordinator {
         // Credentials.
         var password: String?
         if share.auth == .registered {
-            password = Keychain.password(for: id)
-            if password == nil {
+            // Off the main thread: this blocks for as long as a Keychain prompt is on screen.
+            let lookup = await Keychain.lookUpPasswordInBackground(for: id)
+            guard !Task.isCancelled, rt.wantsMounted else { return finishCancelled(rt) }
+            switch lookup {
+            case .found(let found):
+                password = found
+            case .missing, .denied:
+                let message = lookup == .missing
+                    ? "No password is saved for this share."
+                    : "Berth wasn’t allowed to read this share’s password from the Keychain."
                 rt.state = .authFailed
-                rt.lastError = "No password is saved for this share."
-                log.add(.error, "No password in Keychain", share: share)
-                onEvent?(.authFailed(share, message: rt.lastError!))
+                rt.lastError = message
+                log.add(.error, lookup == .missing ? "No password in Keychain" : "Keychain access denied", share: share)
+                onEvent?(.authFailed(share, message: message))
+                return
+            case .unavailable(let status):
+                // Typically a locked Keychain. Nothing is wrong with the credentials, so keep trying.
+                rt.state = .failed
+                rt.lastError = "The Keychain isn’t available (\(Keychain.message(for: status)))."
+                if rt.attempt == 0 { log.add(.warning, "Keychain unavailable: \(Keychain.message(for: status)) [\(status)]", share: share) }
+                scheduleRetry(id)
                 return
             }
         }
@@ -448,7 +494,7 @@ public final class ShareCoordinator {
                 _ = await performUnmount(id, force: false, reason: "Cancelled", isInternal: true)
                 return
             }
-            didMount(share, at: path, address: address, reconnected: reason == .reconnect || reason == .wake || reason == .network)
+            didMount(share, at: path, address: address, reconnected: reason.isReconnect && rt.hasBeenMounted)
         } catch {
             handleMountError(error, share: share)
         }
@@ -472,6 +518,7 @@ public final class ShareCoordinator {
     private func didMount(_ share: Share, at path: String, address: ServerAddress, reconnected: Bool) {
         let rt = runtime(for: share.id)
         rt.state = .mounted
+        rt.hasBeenMounted = true
         rt.mountPoint = path
         rt.connectedSince = Date()
         rt.attempt = 0
@@ -563,8 +610,12 @@ public final class ShareCoordinator {
     /// Records a mount we didn't create (or found at launch).
     private func adopt(_ entry: MountTable.Entry, for share: Share, announce: Bool) {
         let rt = runtime(for: share.id)
+        // A volume Berth is unmounting right now is still in the mount table. Adopting it would
+        // flip the share back to "wanted" and remount what the user just asked to unmount.
+        guard !rt.expectingUnmount else { return }
         let wasMounted = rt.state == .mounted && rt.mountPoint == entry.mountPoint
         rt.state = .mounted
+        rt.hasBeenMounted = true
         rt.mountPoint = entry.mountPoint
         // Prefer the configured address: it knows the port and any kind the user set by hand.
         let address = share.address(matchingHost: entry.host)
@@ -589,7 +640,9 @@ public final class ShareCoordinator {
 
     // MARK: - Unmounting
 
-    private func performUnmount(_ id: UUID, force: Bool, reason: String, isInternal: Bool = false) async -> UnmountOutcome {
+    /// `patience` is how long a polite (DiskArbitration) unmount may take before it counts as failed.
+    private func performUnmount(_ id: UUID, force: Bool, reason: String, isInternal: Bool = false,
+                                patience: Duration = .seconds(15)) async -> UnmountOutcome {
         let rt = runtime(for: id)
         let share = share(id)
         let path = rt.mountPoint ?? share.flatMap { MountTable.find($0, in: MountTable.smbMounts())?.mountPoint }
@@ -611,7 +664,7 @@ public final class ShareCoordinator {
             if useForce {
                 try await DiskWatcher.forceUnmount(path: path)
             } else {
-                try await DiskWatcher.shared.unmount(path: path, force: false, timeout: .seconds(15))
+                try await DiskWatcher.shared.unmount(path: path, force: false, timeout: patience)
             }
         } catch {
             if error.isBusy && !force {
@@ -667,8 +720,16 @@ public final class ShareCoordinator {
                 } else {
                     probe(share)
                 }
-            } else if !rt.state.isMounted, rt.operation == nil, let entry = MountTable.find(share, in: entries) {
-                adopt(entry, for: share, announce: false)
+            } else if !rt.state.isMounted, rt.operation == nil {
+                if let entry = MountTable.find(share, in: entries) {
+                    adopt(entry, for: share, announce: false)
+                } else if rt.wantsMounted, rt.retryTask == nil, rt.state.isWaitingForConditions {
+                    // Wanted, but nothing is scheduled to bring it back. Normally a network change
+                    // does that; this catches the cases where the change was missed or the reason
+                    // for waiting went away on its own. Cheap: it re-checks the rules and stops there
+                    // if nothing changed.
+                    connect(share.id, reason: .retry)
+                }
             }
         }
         removeDuplicateMounts(in: entries)
@@ -747,9 +808,18 @@ public final class ShareCoordinator {
             guard let self else { return }
             log.add(.warning, "Force-unmounting dead mount", share: share)
             _ = await performUnmount(share.id, force: true, reason: "Removed dead mount", isInternal: true)
-            rt.state = .reconnecting
             rt.operation = nil
-            if rt.wantsMounted { connect(share.id, reason: .reconnect) } else { rt.state = .disconnected }
+            rt.pendingConnect = nil
+            if rt.state.isMounted {
+                // The forced unmount failed too. Leave the share as it is; the next probe tries again.
+                return
+            }
+            if rt.wantsMounted {
+                rt.state = .reconnecting
+                connect(share.id, reason: .reconnect)
+            } else {
+                rt.state = .disconnected
+            }
         }
     }
 
@@ -824,8 +894,8 @@ public final class ShareCoordinator {
                 if case .blocked(let message) = decision, !rt.overridesRule {
                     // Left the allowed network: unmount cleanly before the mount goes stale.
                     Task {
-                        _ = await performUnmount(share.id, force: true, reason: "Left allowed network", isInternal: true)
-                        rt.state = .paused(.networkRule(message))
+                        let outcome = await performUnmount(share.id, force: true, reason: "Left allowed network", isInternal: true)
+                        if outcome == .unmounted || outcome == .notMounted { rt.state = .paused(.networkRule(message)) }
                     }
                 } else if rt.activeAddressKind == .tailscale && !new.tailscale.isUp {
                     // The mount rode on the tunnel that just went away.
@@ -865,11 +935,14 @@ public final class ShareCoordinator {
                 let rt = runtime(for: share.id)
                 rt.remountAfterWake = rt.wantsMounted
                 return Task {
-                    let outcome = await self.performUnmount(share.id, force: false, reason: "Unmounted before sleep", isInternal: true)
+                    // Sleep only waits so long (see PowerObserver), so don't spend it all asking nicely.
+                    var outcome = await self.performUnmount(share.id, force: false, reason: "Unmounted before sleep",
+                                                            isInternal: true, patience: .seconds(6))
                     if case .busy = outcome {
-                        _ = await self.performUnmount(share.id, force: true, reason: "Unmounted before sleep", isInternal: true)
+                        outcome = await self.performUnmount(share.id, force: true, reason: "Unmounted before sleep", isInternal: true)
                     }
-                    rt.state = .paused(.sleeping)
+                    // Still mounted if both failed; say so rather than "paused".
+                    if outcome == .unmounted || outcome == .notMounted { rt.state = .paused(.sleeping) }
                 }
             }
             for task in tasks { await task.value }
@@ -919,15 +992,12 @@ public final class ShareCoordinator {
 
     /// Aggregate state for the menu bar icon.
     public var aggregate: AggregateState {
-        let states = store.config.shares.map { runtime(for: $0.id).state }
-        if states.contains(where: { $0 == .authFailed || $0 == .failed }) { return .problem }
-        if states.contains(where: { $0.tone == .warning }) && states.contains(where: { _ in true }) {
-            // Only flag warnings for shares the user wants mounted.
-            let wanted = store.config.shares.filter { runtime(for: $0.id).wantsMounted }.map { runtime(for: $0.id).state }
-            if wanted.contains(where: { $0.tone == .warning }) { return .problem }
-        }
-        if states.contains(where: \.isBusy) { return .busy }
-        if states.contains(where: \.isMounted) { return .mounted }
+        let all = store.config.shares.map { runtime(for: $0.id) }
+        if all.contains(where: { $0.state.tone == .negative }) { return .problem }
+        // Warnings only count for shares the user wants mounted.
+        if all.contains(where: { $0.wantsMounted && $0.state.tone == .warning }) { return .problem }
+        if all.contains(where: { $0.state.isBusy }) { return .busy }
+        if all.contains(where: { $0.state.isMounted }) { return .mounted }
         return .idle
     }
 

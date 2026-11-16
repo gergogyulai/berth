@@ -93,6 +93,9 @@ public final class IPCServer: @unchecked Sendable {
     public func start() throws {
         let path = IPC.socketURL.path
         try FileManager.default.createDirectory(at: IPC.socketURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // A socket file left by a crash refuses connections and can be replaced. One that answers
+        // belongs to another running Berth; taking it over would cut that copy off from the CLI.
+        guard !Self.isAnswering(path) else { throw POSIXError(.EADDRINUSE) }
         unlink(path)
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -119,6 +122,16 @@ public final class IPCServer: @unchecked Sendable {
         source?.cancel()
         source = nil
         unlink(IPC.socketURL.path)
+    }
+
+    static func isAnswering(_ path: String) -> Bool {
+        guard var addr = try? address(for: path) else { return false }
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        return withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        } == 0
     }
 
     static func address(for path: String) throws -> sockaddr_un {
@@ -211,6 +224,7 @@ enum IPCLineIO {
         var buffer = [UInt8](repeating: 0, count: 4096)
         while data.count < limit {
             let n = read(fd, &buffer, buffer.count)
+            if n < 0, errno == EINTR { continue }
             if n <= 0 { break }
             if let nl = buffer[0..<n].firstIndex(of: 0x0A) {
                 data.append(contentsOf: buffer[0..<nl])
@@ -228,6 +242,7 @@ enum IPCLineIO {
             var offset = 0
             while offset < raw.count {
                 let n = Darwin.write(fd, raw.baseAddress! + offset, raw.count - offset)
+                if n < 0, errno == EINTR { continue }
                 if n <= 0 { break }
                 offset += n
             }

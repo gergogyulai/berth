@@ -30,7 +30,7 @@ struct MenuBarContent: View {
         if !model.config.shares.isEmpty {
             Button("Mount All") { model.coordinator.mountAll() }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
-            Button("Unmount All") { Task { await model.coordinator.unmountAll() } }
+            Button("Unmount All") { model.unmountAll() }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
                 .disabled(model.coordinator.mountedCount == 0)
             Divider()
@@ -71,10 +71,10 @@ private struct ShareMenu: View {
                 Button("Open in \(FinderIntegration.preferredTerminal.name)") { FinderIntegration.openInTerminal(path) }
                 Button("Copy Path") { FinderIntegration.copyPath(path) }
                 Divider()
-                Button("Unmount") { Task { await model.coordinator.unmount(share.id) } }
+                Button("Unmount") { model.unmount([share.id]) }
                 Button("Reconnect") { model.coordinator.reconnect(share.id) }
             } else if rt.isTrying {
-                Button("Stop Trying") { Task { await model.coordinator.unmount(share.id) } }
+                Button("Stop Trying") { model.unmount([share.id]) }
             } else {
                 Button("Mount") { model.coordinator.mount(share.id) }
             }
@@ -90,7 +90,7 @@ private struct ShareMenu: View {
             Text(share.name)
             Text(subtitle(rt))
         } primaryAction: {
-            model.coordinator.toggle(share.id)
+            model.toggle(share.id)
         }
     }
 

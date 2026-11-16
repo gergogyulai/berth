@@ -12,7 +12,7 @@ public enum Keychain {
         case status(OSStatus)
         public var errorDescription: String? {
             switch self {
-            case .status(let s): (SecCopyErrorMessageString(s, nil) as String?) ?? "Keychain error \(s)"
+            case .status(let s): Keychain.message(for: s)
             }
         }
     }
@@ -25,14 +25,58 @@ public enum Keychain {
         ]
     }
 
+    /// Why a password could or couldn't be read. "Not there" and "couldn't get at it" need different
+    /// handling: the first is the user's to fix, the second usually fixes itself.
+    public enum Lookup: Sendable, Equatable {
+        case found(String)
+        case missing
+        /// The user (or a policy) refused access to the item.
+        case denied
+        /// The Keychain can't be read right now, e.g. it's locked or no UI is allowed.
+        case unavailable(OSStatus)
+
+        public var password: String? {
+            if case .found(let password) = self { return password }
+            return nil
+        }
+    }
+
     public static func password(for shareID: UUID) -> String? {
+        lookUpPassword(for: shareID).password
+    }
+
+    /// Reads the password. Can block for as long as a Keychain access prompt stays on screen, so call
+    /// it off the main thread (see `lookUpPasswordInBackground`).
+    public static func lookUpPassword(for shareID: UUID) -> Lookup {
         var query = baseQuery(shareID)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        switch status {
+        case errSecSuccess:
+            guard let data = item as? Data, let password = String(data: data, encoding: .utf8) else { return .missing }
+            return .found(password)
+        case errSecItemNotFound:
+            return .missing
+        case errSecAuthFailed, errSecUserCanceled:
+            return .denied
+        default:
+            return .unavailable(status)
+        }
+    }
+
+    private static let queue = DispatchQueue(label: "app.berth.keychain", qos: .userInitiated)
+
+    /// `lookUpPassword` on a background queue, so a Keychain prompt never freezes the app.
+    public static func lookUpPasswordInBackground(for shareID: UUID) async -> Lookup {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: lookUpPassword(for: shareID)) }
+        }
+    }
+
+    public static func message(for status: OSStatus) -> String {
+        (SecCopyErrorMessageString(status, nil) as String?) ?? "Keychain error \(status)"
     }
 
     public static func hasPassword(for shareID: UUID) -> Bool {

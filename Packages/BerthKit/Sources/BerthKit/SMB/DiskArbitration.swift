@@ -109,7 +109,7 @@ public final class DiskWatcher: @unchecked Sendable {
                     let text = DADissenterGetStatusString(dissenter) as String?
                     let busy = status == kDAReturnBusy || status == kDAReturnExclusiveAccess
                     context.box.fire(UnmountError(
-                        message: text ?? (busy ? "The volume is in use." : "Unmount failed (\(String(status, radix: 16))."),
+                        message: text ?? (busy ? "The volume is in use." : "Unmount failed (0x\(String(UInt32(bitPattern: status), radix: 16)))."),
                         isBusy: busy))
                 } else {
                     context.box.fire(nil)

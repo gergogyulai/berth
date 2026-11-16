@@ -102,4 +102,15 @@ public enum ShareState: Equatable, Sendable {
     public var isMounted: Bool { self == .mounted || self == .stale }
     public var isBusy: Bool { tone == .busy }
     public var isProblem: Bool { tone == .warning || tone == .negative }
+
+    /// Idle, with nothing in the state itself that would bring the share back: waiting on the
+    /// network, a rule, or (transiently) between attempts. Not sleep: waking has its own sequence,
+    /// which also decides whether the share comes back at all.
+    var isWaitingForConditions: Bool {
+        switch self {
+        case .disconnected: true
+        case .paused(let reason): reason != .sleeping
+        default: false
+        }
+    }
 }

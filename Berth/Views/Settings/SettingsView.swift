@@ -219,6 +219,13 @@ private struct AutomationSettings: View {
                 LabeledContent("Unmount all shares") {
                     HotKeyRecorder(hotKey: hotKeyBinding(\.unmountAllHotKey))
                 }
+                if !model.unavailableHotKeys.isEmpty {
+                    Label(model.unavailableHotKeys.count == 1
+                          ? "\(unavailableHotKeyName) can’t be used: another app or shortcut already has that key combination."
+                          : "These shortcuts can’t be used: something else already has those key combinations.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
             } header: {
                 Text("Keyboard Shortcuts")
             } footer: {
@@ -269,6 +276,12 @@ private struct AutomationSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var unavailableHotKeyName: String {
+        let prefs = model.config.preferences
+        let hotKey = model.unavailableHotKeys.contains(.mountAll) ? prefs.mountAllHotKey : prefs.unmountAllHotKey
+        return hotKey?.display ?? String(localized: "The shortcut")
     }
 
     private func hotKeyBinding(_ keyPath: WritableKeyPath<Preferences, HotKey?>) -> Binding<HotKey?> {

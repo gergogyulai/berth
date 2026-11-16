@@ -259,3 +259,113 @@ import Testing
         #expect(prefs.restartStuckMountService)
     }
 }
+
+@Suite struct LenientConfigTests {
+    @Test func oneDamagedShareDoesNotDropTheOthers() throws {
+        let json = """
+        {"shares": [
+            {"id": "11111111-1111-1111-1111-111111111111", "shareName": "good"},
+            {"id": "not-a-uuid", "shareName": "bad"},
+            "garbage",
+            {"id": "22222222-2222-2222-2222-222222222222", "shareName": "also good", "groupID": 7}
+        ]}
+        """
+        let config = try ConfigStore.decode(Data(json.utf8))
+        #expect(config.shares.map(\.shareName) == ["good", "also good"])
+        #expect(config.shares.last?.groupID == nil)
+    }
+
+    @Test func timingsAreKeptInAUsableRange() throws {
+        let json = #"{"probeInterval": 0, "probeTimeout": -4, "mountTimeout": 0, "maxRetryDelay": 1, "mountAllHotKey": "oops"}"#
+        let prefs = try JSONDecoder().decode(Preferences.self, from: Data(json.utf8))
+        #expect(prefs.probeInterval == 5)
+        #expect(prefs.probeTimeout == 1)
+        #expect(prefs.mountTimeout == 5)
+        #expect(prefs.maxRetryDelay == 10)
+        #expect(prefs.mountAllHotKey == nil)
+        // Values the settings offer pass through untouched.
+        let normal = try JSONDecoder().decode(Preferences.self, from: Data(#"{"staleGracePeriod": 0, "mountTimeout": 60}"#.utf8))
+        #expect(normal.staleGracePeriod == 0)
+        #expect(normal.mountTimeout == 60)
+    }
+}
+
+@Suite struct CustomMountPointTests {
+    func entry(_ point: String, share: String = "files", host: String = "192.168.1.54") -> MountTable.Entry {
+        MountTable.Entry(mountPoint: point, source: "", host: host, share: share, username: "gergo", ownerUID: getuid())
+    }
+
+    @Test func matchesAFolderWrittenWithATilde() {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        // Reached under another host name, so only the folder can identify it.
+        let share = Share(addresses: [ServerAddress(host: "nas.local")], shareName: "files",
+                          mountLocation: .custom(path: "~/Shares/files/"))
+        let found = MountTable.find(share, in: [entry("/Volumes/other", share: "other"), entry("\(home)/Shares/files")])
+        #expect(found?.mountPoint == "\(home)/Shares/files")
+    }
+
+    @Test func anotherShareInTheFolderIsNotOurs() {
+        let share = Share(addresses: [ServerAddress(host: "nas.local")], shareName: "files",
+                          mountLocation: .custom(path: "/Users/Shared/mnt"))
+        #expect(MountTable.find(share, in: [entry("/Users/Shared/mnt", share: "media")]) == nil)
+    }
+}
+
+@MainActor @Suite struct NetworkBaselineTests {
+    let online = NetworkSnapshot(isOnline: true, primary: .wifi, usesWiFi: true, ssid: "Home")
+
+    @Test func comingOnlineAfterAnOfflineLaunchIsAChange() {
+        let monitor = NetworkMonitor()
+        var changes = 0
+        monitor.onChange = { _, _ in changes += 1 }
+        #expect(!monitor.hasBaseline)
+        // Offline at launch looks exactly like "haven't looked yet".
+        monitor.apply(.unknown)
+        #expect(monitor.hasBaseline)
+        #expect(changes == 0)
+        monitor.apply(online)
+        #expect(changes == 1)
+        monitor.apply(online)
+        #expect(changes == 1)
+    }
+
+    @Test func theFirstSnapshotIsNotAChange() {
+        let monitor = NetworkMonitor()
+        var changes = 0
+        monitor.onChange = { _, _ in changes += 1 }
+        monitor.apply(online)
+        #expect(changes == 0)
+        #expect(monitor.snapshot == online)
+    }
+
+    @Test func becomingMeteredCountsAsAChange() {
+        var metered = online
+        metered.isExpensive = true
+        var lowData = online
+        lowData.isConstrained = true
+        #expect(online.fingerprint != metered.fingerprint)
+        #expect(online.fingerprint != lowData.fingerprint)
+    }
+}
+
+@Suite struct ConnectReasonTests {
+    @Test func onlyReturningMountsCountAsReconnects() {
+        #expect(ConnectReason.reconnect.isReconnect && ConnectReason.wake.isReconnect && ConnectReason.network.isReconnect)
+        #expect(!ConnectReason.user.isReconnect && !ConnectReason.launch.isReconnect && !ConnectReason.retry.isReconnect)
+        #expect(!ConnectReason.user.isAutomatic && ConnectReason.retry.isAutomatic)
+    }
+}
+
+@Suite struct WaitingStateTests {
+    @Test func onlyIdleStatesAreRetriedByTheHealthCheck() {
+        #expect(ShareState.disconnected.isWaitingForConditions)
+        #expect(ShareState.paused(.offline).isWaitingForConditions)
+        #expect(ShareState.paused(.networkRule("Not on a home network")).isWaitingForConditions)
+        // Waking decides what comes back; errors have their own retries or need the user.
+        #expect(!ShareState.paused(.sleeping).isWaitingForConditions)
+        #expect(!ShareState.authFailed.isWaitingForConditions)
+        #expect(!ShareState.hostUnreachable.isWaitingForConditions)
+        #expect(!ShareState.tailscaleDown.isWaitingForConditions)
+        #expect(!ShareState.mounted.isWaitingForConditions)
+    }
+}

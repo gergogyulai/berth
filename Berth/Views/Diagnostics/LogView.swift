@@ -8,7 +8,6 @@ struct LogView: View {
     @State private var shareFilter: UUID?
     @State private var search = ""
     @State private var selection = Set<EventLog.Entry.ID>()
-    @State private var followTail = true
 
     var body: some View {
         let entries = filtered
@@ -177,7 +176,7 @@ enum ConfigTransfer {
             model.coordinator.syncRuntimes()
             model.log.add(.info, "Imported configuration (\(count) shares)")
             let done = NSAlert()
-            done.messageText = String(localized: "Imported \(count) shares")
+            done.messageText = count == 1 ? String(localized: "Imported 1 share") : String(localized: "Imported \(count) shares")
             done.informativeText = String(localized: "Passwords aren’t part of the export. Shares that need one will ask when they first mount.")
             done.runModal()
         } catch {

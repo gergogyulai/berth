@@ -23,8 +23,10 @@ public struct Configuration: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = try c.value(.version, default: Configuration.currentVersion)
-        shares = try c.value(.shares, default: [])
-        groups = try c.value(.groups, default: [])
+        // Element by element: one share that doesn't decode must not empty the whole list, which
+        // the next save would then make permanent.
+        shares = c.lossyArray(.shares)
+        groups = c.lossyArray(.groups)
         homeNetworks = try c.value(.homeNetworks, default: HomeNetworks())
         preferences = try c.value(.preferences, default: Preferences())
     }
@@ -113,8 +115,23 @@ public struct Preferences: Codable, Equatable, Sendable {
         notifyOnDisconnect = try c.value(.notifyOnDisconnect, default: d.notifyOnDisconnect)
         notifyOnAuthFailure = try c.value(.notifyOnAuthFailure, default: d.notifyOnAuthFailure)
         notifyOnStale = try c.value(.notifyOnStale, default: d.notifyOnStale)
-        mountAllHotKey = try c.decodeIfPresent(HotKey.self, forKey: .mountAllHotKey)
-        unmountAllHotKey = try c.decodeIfPresent(HotKey.self, forKey: .unmountAllHotKey)
+        mountAllHotKey = try? c.decodeIfPresent(HotKey.self, forKey: .mountAllHotKey)
+        unmountAllHotKey = try? c.decodeIfPresent(HotKey.self, forKey: .unmountAllHotKey)
+        clampTimings()
+    }
+
+    /// Keeps hand-edited or synced values inside ranges the engine can work with: a zero timeout
+    /// would fail every mount, a zero interval would spin.
+    mutating func clampTimings() {
+        func clamp(_ value: TimeInterval, _ range: ClosedRange<TimeInterval>, fallback: TimeInterval) -> TimeInterval {
+            value.isFinite ? min(max(value, range.lowerBound), range.upperBound) : fallback
+        }
+        let d = Preferences()
+        probeInterval = clamp(probeInterval, 5...3600, fallback: d.probeInterval)
+        probeTimeout = clamp(probeTimeout, 1...120, fallback: d.probeTimeout)
+        mountTimeout = clamp(mountTimeout, 5...600, fallback: d.mountTimeout)
+        maxRetryDelay = clamp(maxRetryDelay, 10...86_400, fallback: d.maxRetryDelay)
+        staleGracePeriod = clamp(staleGracePeriod, 0...3600, fallback: d.staleGracePeriod)
     }
 }
 

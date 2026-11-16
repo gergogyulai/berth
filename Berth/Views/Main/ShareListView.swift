@@ -196,7 +196,7 @@ struct ShareRow: View {
     private func accessory(_ rt: ShareRuntime) -> some View {
         if rt.state.isMounted && !rt.isBusy {
             Button {
-                Task { await model.coordinator.unmount(share.id) }
+                model.unmount([share.id])
             } label: {
                 Image(systemName: "eject.fill")
                     .font(.system(size: 12))
@@ -209,7 +209,7 @@ struct ShareRow: View {
             .accessibilityLabel("Unmount")
         } else if rt.isTrying && isHovering {
             Button {
-                Task { await model.coordinator.unmount(share.id) }
+                model.unmount([share.id])
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 14))
@@ -288,13 +288,13 @@ struct ShareContextMenu: View {
             }
 
             if rt.state.isMounted {
-                Button("Unmount", systemImage: "eject") { Task { await model.coordinator.unmount(shareID) } }
+                Button("Unmount", systemImage: "eject") { model.unmount([shareID]) }
                 if rt.state == .stale {
-                    Button("Force Unmount", systemImage: "eject.circle") { Task { await model.coordinator.unmount(shareID, force: true) } }
+                    Button("Force Unmount", systemImage: "eject.circle") { model.forceUnmount([shareID]) }
                 }
                 Button("Reconnect", systemImage: "arrow.clockwise") { model.coordinator.reconnect(shareID) }
             } else if rt.isTrying {
-                Button("Stop Trying", systemImage: "xmark") { Task { await model.coordinator.unmount(shareID) } }
+                Button("Stop Trying", systemImage: "xmark") { model.unmount([shareID]) }
             } else {
                 Button("Mount", systemImage: "externaldrive.badge.plus") { model.coordinator.mount(shareID) }
             }

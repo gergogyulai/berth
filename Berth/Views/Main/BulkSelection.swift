@@ -33,14 +33,10 @@ struct ShareBatch {
     func mount() { mountable.forEach(model.coordinator.mount) }
     func reconnect() { mounted.forEach(model.coordinator.reconnect) }
 
-    func unmount() {
-        for id in unmountable { Task { await model.coordinator.unmount(id) } }
-    }
+    func unmount() { model.unmount(unmountable) }
 
     /// Stale shares only: forcing a healthy mount can lose writes in progress.
-    func forceUnmount() {
-        for id in stale { Task { await model.coordinator.unmount(id, force: true) } }
-    }
+    func forceUnmount() { model.unmount(stale, force: true) }
 
     func openInFinder() { mountPoints.forEach(FinderIntegration.open) }
 

@@ -49,6 +49,8 @@ final class CLIInstaller {
         return dest == bundledToolPath
     }
 
+    /// Something that isn't ours is at the link path. A dangling link (Berth was moved) doesn't
+    /// count: reinstalling just repairs it.
     var isOtherInstalled: Bool {
         FileManager.default.fileExists(atPath: Self.linkPath) && !isInstalled
     }
@@ -61,6 +63,15 @@ final class CLIInstaller {
     func install() {
         lastError = nil
         let fm = FileManager.default
+        if isOtherInstalled {
+            // Someone else's tool lives there. Replacing it is the user's call.
+            let alert = NSAlert()
+            alert.messageText = String(localized: "Replace the “berth” command that’s already installed?")
+            alert.informativeText = String(localized: "\(Self.linkPath) belongs to something other than this copy of Berth. Installing replaces it.")
+            alert.addButton(withTitle: String(localized: "Replace"))
+            alert.addButton(withTitle: String(localized: "Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
         if fm.isWritableFile(atPath: "/usr/local/bin") {
             try? fm.removeItem(atPath: Self.linkPath)
             do {
