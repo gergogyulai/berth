@@ -421,6 +421,7 @@ struct AddressListEditor: View {
                     Image(systemName: result.isReachable ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .foregroundStyle(result.isReachable ? .green : .orange)
                         .help(result.latency.map { formatLatency($0.inMilliseconds) } ?? "Not reachable")
+                        .accessibilityLabel(result.isReachable ? "Reachable" : "Not reachable")
                 }
                 kindBadge(address)
                 Menu {
@@ -443,6 +444,8 @@ struct AddressListEditor: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .help("Address Options")
+                .accessibilityLabel("Address Options")
             }
         }
         HStack {
@@ -553,6 +556,7 @@ struct SSIDListEditor: View {
                 }
                 .buttonStyle(.plain)
                 .help("Remove")
+                .accessibilityLabel("Remove \(ssid)")
             }
         }
         HStack {

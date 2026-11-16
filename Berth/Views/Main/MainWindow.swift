@@ -73,10 +73,9 @@ struct MainWindow: View {
             presenting: pendingDeletion.isEmpty ? nil : pendingDeletion
         ) { shares in
             Button("Delete", role: .destructive) {
-                selectedShares.subtract(shares.map(\.id))
-                for share in shares {
-                    Task { await model.coordinator.remove(share.id, unmountFirst: true) }
-                }
+                // The selection follows the share list, so a share that turns out to be in use (and
+                // is kept) stays selected.
+                model.delete(shares)
             }
             Button("Cancel", role: .cancel) {}
         } message: { shares in
@@ -179,12 +178,12 @@ struct MainWindow: View {
         let anyMounted = shares.contains { model.runtime($0.id).state.isMounted }
         if shares.count == 1 {
             return anyMounted
-                ? "The share will be unmounted and its password removed from your Keychain."
-                : "Its password will be removed from your Keychain."
+                ? "The share will be unmounted and its password removed from your Keychain. This can’t be undone."
+                : "Its password will be removed from your Keychain. This can’t be undone."
         }
         return anyMounted
-            ? "Mounted shares will be unmounted, and all of their passwords removed from your Keychain."
-            : "Their passwords will be removed from your Keychain."
+            ? "Mounted shares will be unmounted, and all of their passwords removed from your Keychain. This can’t be undone."
+            : "Their passwords will be removed from your Keychain. This can’t be undone."
     }
 
     private func newShare(prefill: Share? = nil) {

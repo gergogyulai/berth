@@ -52,9 +52,9 @@ struct ShareInspector: View {
         InspectorButtonRow {
             if rt.state.isMounted {
                 Button { if let p = rt.mountPoint { FinderIntegration.open(p) } } label: { Text("Open").frame(maxWidth: .infinity) }
-                Button { Task { await model.coordinator.unmount(shareID) } } label: { Text("Unmount").frame(maxWidth: .infinity) }
+                Button { model.unmount([shareID]) } label: { Text("Unmount").frame(maxWidth: .infinity) }
             } else if rt.isTrying {
-                Button { Task { await model.coordinator.unmount(shareID) } } label: { Text("Stop Trying").frame(maxWidth: .infinity) }
+                Button { model.unmount([shareID]) } label: { Text("Stop Trying").frame(maxWidth: .infinity) }
             } else {
                 Button { model.coordinator.mount(shareID) } label: { Text("Mount").frame(maxWidth: .infinity) }
                     .buttonStyle(.borderedProminent)

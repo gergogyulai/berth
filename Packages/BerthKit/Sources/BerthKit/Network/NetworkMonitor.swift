@@ -12,6 +12,9 @@ import os
 @Observable
 public final class NetworkMonitor {
     public private(set) var snapshot: NetworkSnapshot = .unknown
+    /// False until the first real snapshot is in. An offline Mac produces a snapshot equal to
+    /// `.unknown`, so "have we looked yet?" needs its own flag.
+    public private(set) var hasBaseline = false
     public private(set) var locationAuthorization: CLAuthorizationStatus = .notDetermined
 
     /// Called on the main actor when the network fingerprint changes (after debouncing).
@@ -29,6 +32,7 @@ public final class NetworkMonitor {
     public init() {}
 
     public func start() {
+        guard pollTask == nil else { return }
         pathMonitor.pathUpdateHandler = { [weak self] path in
             Task { @MainActor in self?.pathChanged(path) }
         }
@@ -73,10 +77,11 @@ public final class NetworkMonitor {
     public func refreshNow() { scheduleRefresh(delay: .zero) }
 
     private func pathChanged(_ path: NWPath) {
+        let isFirst = latestPath == nil
         latestPath = path
         // Interfaces flap during transitions (Wi-Fi → Ethernet, VPN reconnects). Wait for things
-        // to settle before telling anyone.
-        scheduleRefresh(delay: .milliseconds(1500))
+        // to settle before telling anyone. The first path is the baseline: nothing to settle.
+        scheduleRefresh(delay: isFirst ? .zero : .milliseconds(1500))
     }
 
     private func scheduleRefresh(delay: Duration) {
@@ -91,12 +96,17 @@ public final class NetworkMonitor {
         }
     }
 
-    private func apply(_ new: NetworkSnapshot) {
+    func apply(_ new: NetworkSnapshot) {
         let old = snapshot
+        guard hasBaseline else {
+            // The first snapshot is the baseline, not a change.
+            snapshot = new
+            hasBaseline = true
+            return
+        }
         guard old != new else { return }
         snapshot = new
-        // The first snapshot is the baseline, not a change.
-        if old != .unknown, old.fingerprint != new.fingerprint {
+        if old.fingerprint != new.fingerprint {
             log.info("Network changed: \(new.summary, privacy: .public)")
             onChange?(old, new)
         }

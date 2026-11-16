@@ -33,6 +33,11 @@ public final class ShareRuntime: Identifiable {
     @ObservationIgnored var ejectRequestedAt: Date?
     @ObservationIgnored var remountAfterWake = false
     @ObservationIgnored var wakeAttempted = false
+    /// A connect that was asked for while another operation was still winding down; it runs when
+    /// that one ends.
+    @ObservationIgnored var pendingConnect: ConnectReason?
+    /// Whether this share has been mounted at some point since launch ("reconnected" vs "mounted").
+    @ObservationIgnored var hasBeenMounted = false
 
     init(id: UUID) { self.id = id }
 
@@ -45,10 +50,28 @@ public final class ShareRuntime: Identifiable {
         return isBusy || nextRetryAt != nil || state == .tailscaleDown
     }
 
+    /// Stops everything in flight for this share.
+    func cancelWork() {
+        retryTask?.cancel()
+        retryTask = nil
+        nextRetryAt = nil
+        pendingConnect = nil
+        operation?.cancel()
+    }
+
     func recordLatency(_ latency: Duration) {
         lastProbeLatency = latency
         lastProbeAt = Date()
         latencyHistory.append(latency.inMilliseconds)
         if latencyHistory.count > 40 { latencyHistory.removeFirst(latencyHistory.count - 40) }
     }
+}
+
+/// Why a connection attempt was started.
+enum ConnectReason: String {
+    case user, launch, network, retry, reconnect, wake, availability
+
+    var isAutomatic: Bool { self != .user }
+    /// Reasons that bring back a mount that existed before.
+    var isReconnect: Bool { self == .reconnect || self == .wake || self == .network }
 }

@@ -91,7 +91,7 @@ struct SidebarView: View {
     @ViewBuilder
     private func groupMenu(_ group: ShareGroup) -> some View {
         Button("Mount All in “\(group.name)”") { model.coordinator.mountAll(groupID: group.id, onlyGroup: true) }
-        Button("Unmount All in “\(group.name)”") { Task { await model.coordinator.unmountAll(groupID: group.id, onlyGroup: true) } }
+        Button("Unmount All in “\(group.name)”") { model.unmountAll(groupID: group.id, onlyGroup: true) }
         Divider()
         Button("Rename") { editingGroup = group.id }
         Menu("Icon") {

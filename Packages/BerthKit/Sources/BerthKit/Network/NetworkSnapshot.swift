@@ -49,6 +49,10 @@ public struct NetworkSnapshot: Equatable, Sendable {
             usesWiFi ? "wifi:\(ssid ?? "?")" : "",
             tailscale.isUp ? "ts:\(tailscale.addresses.sorted().joined(separator: ","))" : "ts:down",
             "vpn:\(vpnInterfaces.sorted().joined(separator: ","))",
+            // Metered-ness decides whether auto-mounting is paused, so toggling Low Data Mode or
+            // moving to a hotspot has to count as a change.
+            isExpensive ? "expensive" : "",
+            isConstrained ? "constrained" : "",
         ].joined(separator: "|")
     }
 

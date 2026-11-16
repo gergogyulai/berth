@@ -130,7 +130,8 @@ struct HotKeyRecorder: View {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Clear shortcut")
+                .help("Clear Shortcut")
+                .accessibilityLabel("Clear Shortcut")
             }
         }
         .onDisappear(perform: stop)

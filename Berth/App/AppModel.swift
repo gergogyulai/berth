@@ -28,6 +28,9 @@ final class AppModel {
     /// The share the Connection Log window should filter to when it next opens.
     var logShareFilter: UUID?
 
+    /// Global shortcuts macOS wouldn't register, usually because something else already has them.
+    private(set) var unavailableHotKeys: Set<HotKeyManager.Action> = []
+
     enum Route: Equatable {
         case newShare(prefill: Share?)
         case newGroup
@@ -77,7 +80,7 @@ final class AppModel {
             guard let self else { return }
             switch action {
             case .mountAll: coordinator.mountAll()
-            case .unmountAll: Task { await self.coordinator.unmountAll() }
+            case .unmountAll: unmountAll()
             }
         }
 
@@ -91,8 +94,16 @@ final class AppModel {
     }
 
     func applyHotKeys() {
-        hotKeys.register(.mountAll, hotKey: config.preferences.mountAllHotKey)
-        hotKeys.register(.unmountAll, hotKey: config.preferences.unmountAllHotKey)
+        let wanted: [(HotKeyManager.Action, HotKey?)] = [
+            (.mountAll, config.preferences.mountAllHotKey),
+            (.unmountAll, config.preferences.unmountAllHotKey),
+        ]
+        var failed: Set<HotKeyManager.Action> = []
+        for (action, hotKey) in wanted where !hotKeys.register(action, hotKey: hotKey) {
+            failed.insert(action)
+            log.add(.warning, "The shortcut \(hotKey?.display ?? "") couldn’t be registered. Another app may be using it.")
+        }
+        unavailableHotKeys = failed
     }
 
     // MARK: Convenience
@@ -198,7 +209,7 @@ final class AppModel {
 
     // MARK: IPC
 
-    private func startIPC() {
+    private func startIPC(attempt: Int = 0) {
         let server = IPCServer { request in
             await IPCHandler.handle(request)
         }
@@ -206,7 +217,18 @@ final class AppModel {
             try server.start()
             ipcServer = server
         } catch {
-            log.add(.warning, "Command-line socket unavailable: \(error.localizedDescription)")
+            guard (error as? POSIXError)?.code == .EADDRINUSE else {
+                log.add(.warning, "Command-line socket unavailable: \(error.localizedDescription)")
+                return
+            }
+            // Another copy of Berth has the socket. If it's on its way out (an update, a relaunch),
+            // take over once it's gone instead of leaving the berth command without anyone to talk to.
+            if attempt == 0 { log.add(.warning, "Another copy of Berth is running and is serving the berth command.") }
+            guard attempt < 24 else { return }
+            Task {
+                try? await Task.sleep(for: .seconds(5))
+                startIPC(attempt: attempt + 1)
+            }
         }
     }
 }

@@ -55,20 +55,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard UserDefaults.standard.bool(forKey: DefaultsKey.confirmBeforeQuit), model.coordinator.mountedCount > 0 else {
+        let mounted = model.coordinator.mountedCount
+        guard UserDefaults.standard.bool(forKey: DefaultsKey.confirmBeforeQuit), mounted > 0, !isSessionEnding else {
             return .terminateNow
         }
         let alert = NSAlert()
         alert.messageText = String(localized: "Unmount shares before quitting?")
-        alert.informativeText = String(localized: "\(model.coordinator.mountedCount) shares are mounted. Without Berth they won’t reconnect automatically.")
+        alert.informativeText = mounted == 1
+            ? String(localized: "1 share is mounted. Without Berth it won’t reconnect automatically.")
+            : String(localized: "\(mounted) shares are mounted. Without Berth they won’t reconnect automatically.")
         alert.addButton(withTitle: String(localized: "Unmount & Quit"))
         alert.addButton(withTitle: String(localized: "Quit"))
         alert.addButton(withTitle: String(localized: "Cancel"))
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             Task {
-                await model.coordinator.unmountAll(force: true)
-                NSApp.reply(toApplicationShouldTerminate: true)
+                // Politely first; shares with open files get their own question rather than being
+                // pulled out from under the apps using them. Quits only once everything is unmounted.
+                let ids = model.config.shares.map(\.id)
+                let done = await model.unmountInteractively(ids, force: false, purpose: .unmount)
+                NSApp.reply(toApplicationShouldTerminate: done)
             }
             return .terminateLater
         case .alertSecondButtonReturn:
@@ -76,6 +82,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             return .terminateCancel
         }
+    }
+
+    /// Logging out, restarting or shutting down. The system is waiting on every app, and the mounts
+    /// go away with the session anyway, so this is no time for a question.
+    private var isSessionEnding: Bool {
+        NSAppleEventManager.shared().currentAppleEvent?.attributeDescriptor(forKeyword: kAEQuitReason) != nil
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -102,11 +114,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleShareFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? UUID else { return }
-        model.coordinator.toggle(id)
+        model.toggle(id)
     }
 
     @objc private func mountAll() { model.coordinator.mountAll() }
-    @objc private func unmountAll() { Task { await model.coordinator.unmountAll() } }
+    @objc private func unmountAll() { model.unmountAll() }
 
     // MARK: Activation policy
 

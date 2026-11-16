@@ -7,7 +7,14 @@ import BerthKit
 // Talks to the running app over a per-user Unix socket, so mounting goes through the same engine
 // (Keychain credentials, network rules, reconnect logic) as the UI.
 
-let version = "1.0.0"
+/// The version of the app this tool ships in (Berth.app/Contents/Helpers/berth), so the two never
+/// disagree. Falls back to a fixed string when run from somewhere else, such as a build folder.
+let version: String = {
+    let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+    let info = exe.deletingLastPathComponent().deletingLastPathComponent().appending(path: "Info.plist")
+    let plist = NSDictionary(contentsOf: info)
+    return plist?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+}()
 
 struct Options {
     var json = false
@@ -65,10 +72,23 @@ func parse(_ args: [String]) -> (String?, Options) {
         case "-a", "--all": options.group = "*"
         case "-g", "--group":
             i += 1
-            if i < args.count { options.group = args[i] }
+            guard i < args.count else { fail("--group needs a group name.", code: 64) }
+            options.group = args[i]
         case "-h", "--help": command = "help"
         case "-v", "--version": command = "version"
+        case "--":
+            // Everything after is a name, even if it starts with a dash.
+            let rest = args[(i + 1)...]
+            if command == nil, let first = rest.first {
+                command = first
+                options.positional.append(contentsOf: rest.dropFirst())
+            } else {
+                options.positional.append(contentsOf: rest)
+            }
+            i = args.count
         default:
+            // A mistyped flag must not be taken for a share name (`unmount --froce nas`).
+            if arg.hasPrefix("-"), arg.count > 1 { fail("unknown option “\(arg)”. See `berth --help`.", code: 64) }
             if command == nil { command = arg } else { options.positional.append(arg) }
         }
         i += 1
@@ -219,7 +239,7 @@ case "unmount", "umount", "eject":
 
 case "reconnect":
     let response = send(IPC.Request(command: .reconnect, target: shareTarget(options, "reconnect"), wait: !options.noWait))
-    if let message = response.message { print(message) }
+    if options.json { printJSON(response) } else if let message = response.message { print(message) }
     exit(response.ok ? 0 : 1)
 
 case "groups":

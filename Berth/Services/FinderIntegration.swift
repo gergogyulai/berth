@@ -120,11 +120,27 @@ enum IconRenderer {
         return renderer.nsImage
     }
 
+    private struct MenuImageKey: Hashable {
+        var icon: ShareIcon
+        var size: CGFloat
+        var scale: CGFloat
+    }
+
+    private static var menuImages: [MenuImageKey: NSImage] = [:]
+
+    /// Cached: the menu bar menu asks again every time any share's state changes, and rendering
+    /// SwiftUI to a bitmap is far from free.
     static func menuImage(for icon: ShareIcon, size: CGFloat = 16) -> NSImage? {
+        // At least 2x, so a menu that opens on a Retina display is sharp whichever screen is main.
+        let scale = max(2, NSScreen.screens.map(\.backingScaleFactor).max() ?? 2)
+        let key = MenuImageKey(icon: icon, size: size, scale: scale)
+        if let cached = menuImages[key] { return cached }
         let renderer = ImageRenderer(content: ShareIconView(icon: icon, size: size))
-        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
-        let image = renderer.nsImage
-        image?.isTemplate = false
+        renderer.scale = scale
+        guard let image = renderer.nsImage else { return nil }
+        image.isTemplate = false
+        if menuImages.count > 200 { menuImages.removeAll() }
+        menuImages[key] = image
         return image
     }
 }

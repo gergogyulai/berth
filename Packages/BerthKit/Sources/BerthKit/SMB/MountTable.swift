@@ -56,13 +56,28 @@ public enum MountTable {
         }
     }
 
+    /// A path as the mount table would show it: tilde expanded, no trailing slash, and `/tmp`-style
+    /// symlinks at the front resolved. Never touches the path's last component, so it can't block
+    /// on a dead mount.
+    static func canonicalPath(_ path: String) -> String {
+        var expanded = (path as NSString).expandingTildeInPath
+        while expanded.count > 1, expanded.hasSuffix("/") { expanded.removeLast() }
+        let url = URL(fileURLWithPath: expanded)
+        let parent = url.deletingLastPathComponent().resolvingSymlinksInPath().path
+        return (parent as NSString).appendingPathComponent(url.lastPathComponent)
+    }
+
     /// Finds the mount for a share, preferring its known mount point, then any matching host/share.
     public static func find(_ share: Share, knownMountPoint: String? = nil, in entries: [Entry]) -> Entry? {
         if let knownMountPoint, let e = entries.first(where: { $0.mountPoint == knownMountPoint }),
            e.share.caseInsensitiveCompare(share.shareName) == .orderedSame {
             return e
         }
-        if let custom = share.mountLocation.customPath, let e = entries.first(where: { $0.mountPoint == custom }) {
+        // The configured folder is stored as typed ("~/Shares/Media"); the kernel reports the real path.
+        // Something else mounted there is not this share.
+        if let custom = share.mountLocation.customPath.map({ canonicalPath($0) }),
+           let e = entries.first(where: { canonicalPath($0.mountPoint) == custom }),
+           e.share.caseInsensitiveCompare(share.shareName) == .orderedSame {
             return e
         }
         return entries.first { entry in
